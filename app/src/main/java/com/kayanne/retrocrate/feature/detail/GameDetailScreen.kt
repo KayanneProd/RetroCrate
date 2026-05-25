@@ -99,6 +99,10 @@ fun GameDetailScreen(
                     title = "Game not found",
                     description = "We couldn't find game \"${state.gameId}\" in the catalog.",
                 )
+                is GameDetailUiState.Error -> EmptyState(
+                    title = "Couldn't load the catalog",
+                    description = state.message,
+                )
                 is GameDetailUiState.Loaded -> SplitDetailContent(
                     game = state.game,
                     onInstallClick = {

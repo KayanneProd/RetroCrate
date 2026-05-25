@@ -1,5 +1,8 @@
 package com.kayanne.retrocrate.domain.model
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 enum class Platform(val displayName: String) {
     NES("Nintendo Entertainment System"),
     SNES("Super Nintendo"),

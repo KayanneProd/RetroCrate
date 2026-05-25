@@ -1,5 +1,8 @@
 package com.kayanne.retrocrate.domain.model
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class Source(
     val id: String,
     val siteName: String,

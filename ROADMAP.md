@@ -98,26 +98,38 @@ Today's state. Renamed package, Steam-themed design system, 6 stub screens behin
 
 ---
 
-### Branch 3 — `feat/myrient-source` *(decision needed before starting — see Open decisions)*
+### ⏳ Branch 3 — `feat/vimms-source` (code complete, pending device verification)
 
-**Goal:** Replace `FakeGameRepository` with a real scraper. ONE source, ONE platform (recommended: Myrient + GBA). Discovery feed and detail screen now show real games.
+**Source pivot:** Myrient → **Vimm's Lair** (Myrient went down). Platform: **Nintendo 64**.
 
-**Commits:**
-1. `data/network: add OkHttp client config (10s timeouts, custom user-agent, disk cache 50MB, per-host rate limiter ≤2 concurrent)`
-2. `data/source: add RomSource interface (search, fetchDetail, resolveDownloadUrl)`
-3. `data/source/myrient: add MyrientSource implementing RomSource — Jsoup parsers for the directory listing pages`
-4. `data/source/myrient: add MyrientSourceTest with HTML fixtures (no network)`
-5. `data: replace FakeGameRepository with MyrientGameRepository (real scrape, in-memory cache, DataStore-backed catalog snapshot for offline open)`
-6. `feature/home: switch rails to "Recently Added", "Popular This Week" (derived from source signals), "Browse by Platform"`
-7. `core/common: add MetadataEnricher — when a game has no box art / description from the source, lazy-fetch from a stable metadata index (e.g., libretro thumbnails)`
-8. `docs: update LLM-CONTEXT.md §13 scraping strategy with Myrient specifics, add to decision log`
+**Commits as shipped:**
+1. ✅ `data/network: add HttpClient (OkHttp, 50MB disk cache, browser-like UA, per-host Semaphore(2) rate limit)`
+2. ✅ `app: re-add RetroCrateApp Application class to bootstrap HttpClient`
+3. ✅ `data/source: add LibretroThumbnails URL builder (shared between Vimm's and the legacy fake catalog)`
+4. ✅ `data/source/vimms: add VimmsPaths (vault URL per platform) + VimmsParser (Jsoup) + VimmsSource (orchestrator)`
+5. ✅ `data/repository: add VimmsGameRepository implementing GameRepository — mutex-guarded ensureLoaded, LoadStatus sealed`
+6. ✅ `feature/home: HomeViewModel switches to VimmsGameRepository, exposes status; HomeScreen shows LoadingState / ErrorState with Retry / CatalogContent`
+7. ✅ `feature/detail: GameDetailViewModel ensures catalog loaded then looks up by id; new Error UiState handled`
+8. ✅ `test: VimmsParserTest with synthetic HTML fixtures (no network)`
+9. ✅ `docs: LLM-CONTEXT.md §13 rewritten with Vimm's specifics + decision log entry`
 
-**Acceptance:**
-- Home shows real Myrient GBA games.
-- Detail loads real Myrient detail page when tapped.
-- All scrapes are user-initiated (open Home / tap card / search). No background traffic.
-- Tests for Myrient parser pass without network.
-- HIG-behavior sweep: Feedback (loading states everywhere; specific error messages on failure with retry), Accessibility (no scroll loop traps; TalkBack works).
+**Shipped in this branch (additions on top of original plan):**
+- **DataStore catalog snapshot** — `CatalogStore` persists the parsed catalog. Cold launches read instantly from disk; silent background refresh updates the cache.
+- **Cache-first behavior** — if the background refresh fails while a cached catalog exists, the cache stays visible and the failure logs silently. Errors only surface when there's no cache.
+
+**Deferred from original plan:**
+- **Multi-platform** — only N64 wired today. Adding more is mostly a `targetPlatform` change + curated rails per platform.
+- **Real download URL resolution** — Vimm's needs a token-form POST. Branch 5 problem.
+- **Descriptions and genres** — Vimm's pages don't expose these. Branch 3b will pick an external metadata source (IGDB / TheGamesDB / RAWG / hand-curated). Tracked in LLM-CONTEXT.md §15.
+
+**Verification pending (manual on device):**
+- App launches → Home shows "Loading catalog from Vimm's Lair…" briefly.
+- Within a few seconds, the hero carousel + Recently Added + Popular on N64 rails populate with real Vimm's games.
+- If the parser doesn't return entries (selectors drift from real HTML), the rails will be empty — fall-through logic in the repo means Featured shows the first 5 catalog entries, Popular the first 12. Tail risk: zero entries → error state.
+- Network failure → ErrorState shows with Retry button. Retry triggers a fresh fetch.
+- Tap any game → Detail opens with that game's real data (title, year, region, Vimm's source row).
+- Install button still snackbars (Branch 5 wires the actual download).
+- HIG-behavior sweep: Feedback (loading text, error message specifics, retry CTA), Accessibility (Retry button labeled; loading announces via TalkBack).
 
 ---
 
