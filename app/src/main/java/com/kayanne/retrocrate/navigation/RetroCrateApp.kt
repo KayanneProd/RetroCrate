@@ -36,7 +36,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.toRoute
 import com.kayanne.retrocrate.core.designsystem.Spacing
 import com.kayanne.retrocrate.feature.detail.GameDetailScreen
 import com.kayanne.retrocrate.feature.downloads.DownloadsScreen
@@ -98,10 +97,8 @@ fun RetroCrateApp() {
             composable<DownloadsRoute> {
                 DownloadsScreen(onBack = { navController.popBackStack() })
             }
-            composable<GameDetailRoute> { backEntry ->
-                val route = backEntry.toRoute<GameDetailRoute>()
+            composable<GameDetailRoute> {
                 GameDetailScreen(
-                    gameId = route.gameId,
                     onBack = { navController.popBackStack() },
                     onOpenDownloads = { navController.navigate(DownloadsRoute) },
                 )

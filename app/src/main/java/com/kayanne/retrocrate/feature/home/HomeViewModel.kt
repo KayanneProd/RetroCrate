@@ -10,9 +10,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 
-class HomeViewModel(
-    private val repository: GameRepository = FakeGameRepository,
-) : ViewModel() {
+class HomeViewModel : ViewModel() {
+
+    private val repository: GameRepository = FakeGameRepository
 
     val uiState: StateFlow<HomeUiState> = combine(
         repository.observeFeatured(),

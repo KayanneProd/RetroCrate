@@ -70,23 +70,31 @@ Today's state. Renamed package, Steam-themed design system, 6 stub screens behin
 
 ---
 
-### Branch 2 — `feat/game-detail-with-fakes`
+### ⏳ Branch 2 — `feat/game-detail-with-fakes` (code complete, pending device verification)
 
-**Goal:** Tap any capsule → full detail screen with hero art, description, screenshots, source list, **Install** CTA (still stubbed). Validates the detail layout against the Steam store-page reference.
+**Goal:** Tap any capsule → full Steam Deck-style split detail page with **Install** CTA (stubbed via snackbar — real downloads in Branch 5).
 
-**Commits:**
-1. `core/ui: add SectionHeader, MetadataChip (platform/year/size), ScreenshotCarousel`
-2. `feature/detail: rebuild GameDetailScreen with hero image + parallax scroll, title, metadata row, description, screenshot strip, source list, sticky bottom Install button (Steam green)`
-3. `navigation: wire Home → Detail with shared-element-style fade-through (placeholder until shared elements done properly)`
-4. `feature/detail: stub Install button to log + snackbar "download queued (not yet implemented)"`
-5. `domain: enrich Game with screenshots, developer, publisher`
-6. `data: extend FakeGameRepository with rich detail per game`
-7. `docs: update LLM-CONTEXT.md detail patterns section`
+**Commits as shipped:**
+1. ✅ `core/ui: add MetadataChip (small pill on surfaceContainerHigh)`
+2. ✅ `core/ui: add SourceRow (site/region/size on surfaceContainer)`
+3. ✅ `feature/detail: GameDetailViewModel loads from FakeGameRepository.getById; sealed UiState (Loading / Loaded / NotFound)`
+4. ✅ `feature/detail: split landscape GameDetailScreen — left art panel (45%) + right info panel (55%) with title, chips, scrollable description, sources list, sticky Steam-green Install button`
+5. ✅ `feature/detail: Install press shows snackbar "Download queued — real downloads land in Branch 5"`
+6. ✅ `navigation: simplify GameDetailScreen call (ViewModel reads gameId from SavedStateHandle directly)`
+7. ✅ `docs: LLM-CONTEXT.md updated with detail patterns (split layout, MetadataChip, SourceRow)`
 
-**Acceptance:**
-- Detail feels like Steam's store page.
-- Install button is Steam green (secondary color), prominent, sticky at bottom edge.
-- HIG-behavior sweep: Depth (parallax + sticky CTA), Feedback (snackbar on Install), Accessibility (every screenshot has `contentDescription`).
+**Deferred from original plan:**
+- **ScreenshotCarousel** — postponed. Most retro games don't have curated screenshot sets in libretro-thumbnails, and the layout already feels complete without them. Will revisit if real source data exposes good screenshot URLs (Branch 3) or as a post-v1 polish.
+- **Shared-element fade-through from Home → Detail** — postponed to `feat/polish-v1` Branch 8 where SharedTransitionScope work lives.
+
+**Verification pending (manual on device):**
+- Tap any capsule on Home → Detail opens with split layout.
+- Box art fills the left panel with correct 3:4 ratio centered vertically.
+- Right panel shows title, chip row, description text, and source rows (sources will be empty until Branch 3 — that's expected).
+- Install button is Steam green, full-width, snackbar appears on press.
+- Back button returns to Home with state preserved.
+- Top tabs are hidden on Detail (`isTopLevel()` check filters them out).
+- HIG-behavior sweep: Clarity (clean split, one CTA), Deference (art is the visual anchor), Feedback (snackbar on Install, loading spinner on first frame), Accessibility (back button labeled, every Image has contentDescription).
 
 ---
 
