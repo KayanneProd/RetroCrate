@@ -1,0 +1,36 @@
+# --- Build outputs (regenerable; never commit) ---
+.gradle/
+build/
+out/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# --- Per-machine local config (paths and secrets) ---
+local.properties
+*.jks
+*.keystore
+keystore.properties
+
+# --- IDE state (per-machine; not portable) ---
+.idea/
+*.iml
+.vscode/
+
+# --- Claude local config (per-machine permissions, etc.) ---
+.claude/
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log
+CLAUDE.md
+LLM-CONTEXT.md
