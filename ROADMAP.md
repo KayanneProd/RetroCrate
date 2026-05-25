@@ -42,25 +42,31 @@ Today's state. Renamed package, Steam-themed design system, 6 stub screens behin
 
 ---
 
-### Branch 1 — `feat/discovery-with-fakes`
+### ⏳ Branch 1 — `feat/discovery-with-fakes` (code complete, pending device verification)
 
 **Goal:** Home screen looks like Steam — hero carousel, multiple horizontal rails of game capsules — using hardcoded fake data. No network. This is the visual milestone that proves the Big Picture aesthetic on a phone.
 
-**Commits:**
-1. `data: add FakeGameCatalog with ~30 real game titles across 5 platforms, with real public box-art URLs (e.g., libretro thumbnails repo)`
-2. `domain: extend Game with releaseDate, developer, publisher, tags`
-3. `core/ui: add GameCapsule composable (Steam-style 460×215 ratio, 12dp corners, cyan focus glow on hover/press)`
-4. `core/ui: add GameRail (LazyRow with SectionHeader, 16dp padding, snap-on-fling)`
-5. `core/ui: add HeroCarousel (auto-rotating, 16:9 with title overlay + gradient scrim)`
-6. `data: add GameRepository interface + FakeGameRepository implementation`
-7. `feature/home: replace EmptyState with HeroCarousel + 3 rails — Featured, Recently Added, Popular Retro`
-8. `docs: update LLM-CONTEXT.md with the rail/capsule patterns + Coil image loading conventions`
+**Commits as shipped:**
+1. ✅ `domain: extend Game with developer, publisher, tags, heroArtUrl`
+2. ✅ `domain: add GameRepository interface`
+3. ✅ `data: add FakeGameCatalog with 28 real games across 5 platforms (NES/SNES/N64/GBA/PS1), libretro-thumbnails box-art URLs`
+4. ✅ `data: add FakeGameRepository (object, returns Flows)`
+5. ✅ `core/ui: add SectionHeader (title + optional See all)`
+6. ✅ `core/ui: add GameCapsule (3:4 box art, 140dp wide, surfaceContainer fill, Coil AsyncImage with crossfade)`
+7. ✅ `core/ui: add GameRail (SectionHeader + LazyRow)`
+8. ✅ `core/ui: add HeroCarousel (HorizontalPager, 16:9, 6s auto-advance, dot indicators, gradient scrim, title overlay)`
+9. ✅ `feature/home: HomeViewModel exposes combined StateFlow<HomeUiState>; HomeScreen renders carousel + Recently Added rail + Popular Retro rail in a LazyColumn`
+10. ✅ `docs: LLM-CONTEXT.md updated — design system rail/capsule/carousel patterns + Coil conventions; decision log entry added`
 
-**Acceptance:**
-- Home looks like a Steam storefront on first glance.
-- Cover art loads from the network (Coil over OkHttp).
-- Scrolling Home is smooth (60fps on a mid-range device).
-- HIG-behavior sweep: Clarity (clear sectioning), Feedback (press states), Accessibility (`contentDescription` on every capsule = game title), Delight (cyan glow on press, smooth carousel rotation).
+**Deviation from planned:** rails count is 2 (Recently Added, Popular Retro) instead of 3 — Featured is owned by the HeroCarousel, so an additional "Featured" rail would duplicate. Update merged into this PR.
+
+**Verification pending (manual on device):**
+- Hero carousel auto-rotates every 6s, can be swiped manually, dot indicators track.
+- Rails scroll smoothly horizontally. LazyColumn scrolls smoothly vertically.
+- Cover art loads from `raw.githubusercontent.com/libretro-thumbnails`. First-load shows surfaceContainer placeholder, then crossfade to image.
+- Tap on any capsule navigates to Detail (which is still a stub — that's Branch 2).
+- 60fps maintained.
+- TalkBack: every capsule announces game title; every hero slide announces title + platform + year.
 
 ---
 

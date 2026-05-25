@@ -1,15 +1,38 @@
 package com.kayanne.retrocrate.feature.home
 
 import androidx.lifecycle.ViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.lifecycle.viewModelScope
+import com.kayanne.retrocrate.data.repository.FakeGameRepository
+import com.kayanne.retrocrate.domain.model.Game
+import com.kayanne.retrocrate.domain.repository.GameRepository
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 
-class HomeViewModel : ViewModel() {
-    private val _uiState = MutableStateFlow(HomeUiState())
-    val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+class HomeViewModel(
+    private val repository: GameRepository = FakeGameRepository,
+) : ViewModel() {
+
+    val uiState: StateFlow<HomeUiState> = combine(
+        repository.observeFeatured(),
+        repository.observeRecentlyAdded(),
+        repository.observePopularRetro(),
+    ) { featured, recent, popular ->
+        HomeUiState(
+            featured = featured,
+            recentlyAdded = recent,
+            popularRetro = popular,
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = HomeUiState(),
+    )
 }
 
 data class HomeUiState(
-    val isLoading: Boolean = false,
+    val featured: List<Game> = emptyList(),
+    val recentlyAdded: List<Game> = emptyList(),
+    val popularRetro: List<Game> = emptyList(),
 )

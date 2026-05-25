@@ -32,7 +32,7 @@ fun DownloadsScreen(
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
                     }
                 },
-                expandedHeight = 52.dp,
+                expandedHeight = 44.dp,
             )
         },
     ) { innerPadding ->

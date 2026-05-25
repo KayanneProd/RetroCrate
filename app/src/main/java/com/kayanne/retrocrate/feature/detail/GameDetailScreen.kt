@@ -40,7 +40,7 @@ fun GameDetailScreen(
                         Icon(Icons.Outlined.Download, contentDescription = "Downloads")
                     }
                 },
-                expandedHeight = 52.dp,
+                expandedHeight = 44.dp,
             )
         },
     ) { innerPadding ->

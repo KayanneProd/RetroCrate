@@ -1,50 +1,59 @@
 package com.kayanne.retrocrate.feature.home
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.kayanne.retrocrate.core.ui.EmptyState
+import com.kayanne.retrocrate.core.designsystem.Spacing
+import com.kayanne.retrocrate.core.ui.GameRail
+import com.kayanne.retrocrate.core.ui.HeroCarousel
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     contentPadding: PaddingValues,
     onOpenGame: (String) -> Unit,
-    onOpenDownloads: () -> Unit,
     viewModel: HomeViewModel = viewModel(),
 ) {
-    Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(contentPadding),
-        topBar = {
-            TopAppBar(
-                title = { Text("Home") },
-                actions = {
-                    IconButton(onClick = onOpenDownloads) {
-                        Icon(Icons.Outlined.Download, contentDescription = "Downloads")
-                    }
-                },
-                expandedHeight = 52.dp,
-            )
-        },
-    ) { innerPadding ->
-        EmptyState(
-            title = "Discovery rails are coming soon",
-            description = "Steam-style rails of curated and recently added games will live here.",
-            modifier = Modifier.padding(innerPadding),
-        )
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            top = contentPadding.calculateTopPadding(),
+            bottom = contentPadding.calculateBottomPadding() + Spacing.l,
+        ),
+        verticalArrangement = Arrangement.spacedBy(Spacing.m),
+    ) {
+        if (uiState.featured.isNotEmpty()) {
+            item("hero") {
+                HeroCarousel(
+                    featured = uiState.featured,
+                    onGameClick = { onOpenGame(it.id) },
+                )
+            }
+        }
+        if (uiState.recentlyAdded.isNotEmpty()) {
+            item("recently-added") {
+                GameRail(
+                    title = "Recently Added",
+                    games = uiState.recentlyAdded,
+                    onGameClick = { onOpenGame(it.id) },
+                )
+            }
+        }
+        if (uiState.popularRetro.isNotEmpty()) {
+            item("popular-retro") {
+                GameRail(
+                    title = "Popular Retro",
+                    games = uiState.popularRetro,
+                    onGameClick = { onOpenGame(it.id) },
+                )
+            }
+        }
     }
 }
