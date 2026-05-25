@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.ui.EmptyState
 
@@ -39,6 +40,7 @@ fun GameDetailScreen(
                         Icon(Icons.Outlined.Download, contentDescription = "Downloads")
                     }
                 },
+                expandedHeight = 52.dp,
             )
         },
     ) { innerPadding ->

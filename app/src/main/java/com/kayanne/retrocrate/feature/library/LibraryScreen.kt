@@ -4,13 +4,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.ui.EmptyState
 
@@ -21,16 +20,14 @@ fun LibraryScreen(
     onOpenGame: (String) -> Unit,
     viewModel: LibraryViewModel = viewModel(),
 ) {
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
-            .padding(contentPadding)
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
+            .padding(contentPadding),
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = { Text("Library") },
-                scrollBehavior = scrollBehavior,
+                expandedHeight = 52.dp,
             )
         },
     ) { innerPadding ->
