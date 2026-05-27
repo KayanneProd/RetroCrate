@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -257,13 +259,19 @@ private fun InfoPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChipRow(game: Game) {
-    Row(
+    FlowRow(
         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
     ) {
         MetadataChip(label = game.platform.displayName)
         game.releaseYear?.let { MetadataChip(label = it.toString()) }
+        game.genres.take(3).forEach { MetadataChip(label = it) }
         game.developer?.let { MetadataChip(label = it) }
+        game.publisher?.let { publisher ->
+            if (publisher != game.developer) MetadataChip(label = publisher)
+        }
     }
 }

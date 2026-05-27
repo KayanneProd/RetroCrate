@@ -133,22 +133,39 @@ Today's state. Renamed package, Steam-themed design system, 6 stub screens behin
 
 ---
 
-### Branch 4 — `feat/search`
+### ⏳ Branch 4 — `feat/search-and-enrichment` (code complete, pending device verification)
 
-**Goal:** Search tab functional. Type a query → debounced results across the source. Filter by platform.
+**Combined scope per user decision (2026-05-26):** Search + TheGamesDB-backed enrichment for descriptions + genres + developer + publisher, since Search needs genre data to be useful.
 
-**Commits:**
-1. `feature/search: SearchScreen with TextField (Steam-style — cyan underline, search icon), FilterChips row for platforms, results LazyColumn`
-2. `feature/search: SearchViewModel with debounced query (300ms), StateFlow<SearchUiState> covering Idle / Searching / Results / Empty / Error`
-3. `data: GameRepository.search(query, platform) — uses MyrientSource.search`
-4. `core/ui: SearchEmptyState, SearchErrorState with retry`
-5. `feature/search: recent-searches list (DataStore-backed)`
+**Commits as shipped:**
 
-**Acceptance:**
-- Typing in Search returns real results in <1s for cached queries, <3s for fresh.
-- Platform filter chips toggle correctly with cyan selection state.
-- Recent searches show on empty query.
-- HIG-behavior sweep: Clarity (one input, clear filter chips), Feedback (loading spinner, empty/error states), Accessibility (search field labeled, results list announces count to TalkBack).
+*Phase 1 — Enrichment (replaced TheGamesDB with OpenVGDB mid-branch):*
+1. ✅ `domain: add GameEnrichment + data/persistence: EnrichmentStore (DataStore, JSON map)`
+2. ✅ `data/source/openvgdb: bundle openvgdb.zip in assets, extract on first launch, query via Android SQLiteDatabase`
+3. ✅ `data/repository: GameEnrichmentRepository — bulk catalog enrichment via OpenVGDB, ~1s for ~1156 games, persistent cache`
+4. ✅ `data/repository: VimmsGameRepository exposes enrichedCatalog Flow (merge in observation); whole catalog eager-enriches after load`
+5. ✅ `feature/detail: GameDetailViewModel observes the enriched-catalog Flow; no per-game enrichment trigger needed`
+6. ✅ `feature/detail: ChipRow uses FlowRow and renders genres + developer + publisher`
+7. ✅ `cleanup: removed TheGamesDB Retrofit client + DTOs (kept BuildConfig key unused)`
+
+*Phase 2 — Search:*
+8. ✅ `feature/search: SearchViewModel — debounced (300ms) query + selected genre, combined with enrichedCatalog, max 60 results`
+9. ✅ `feature/search: SearchScreen — outlined TextField (Steam cyan focus + clear-X), dynamic genre FilterChip row, LazyVerticalGrid of GameCapsules`
+10. ✅ `docs: LLM-CONTEXT.md updated with Search + enrichment patterns; ROADMAP Branch 4 status`
+
+**Deferred from original plan:**
+- **Recent searches** — bundled DataStore-backed list of recent queries. Post-v1 polish.
+- **Multiple platforms in search** — N64 only (matches catalog scope).
+- **TalkBack count announcement** — push to Branch 8 accessibility pass.
+
+**Verification pending (manual on device):**
+- Open the app → Home shows games immediately (cache).
+- Within ~5–10 seconds, featured + popular get enriched (descriptions and genres show on Detail when you open them).
+- Tap any game (especially a less-popular one) → Detail opens immediately, then description and genre chips appear within ~1–2 seconds.
+- Open Search → type "mario" → results filter live as you type (300ms debounce).
+- Open Search → tap a genre chip (chips appear once enrichment has produced any genres for the catalog) → results filter to that genre.
+- Tap a result → opens Detail with the same enriched data.
+- HIG-behavior sweep: Clarity (one input, clear chip selection), Feedback (debounce works smoothly, placeholders explain why genres might be empty), Accessibility (clear button labeled, search field has placeholder).
 
 ---
 

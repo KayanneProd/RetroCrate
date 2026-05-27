@@ -66,7 +66,7 @@ private fun LoadingState() {
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(Spacing.m))
             Text(
-                text = "Loading catalog from Vimm's Lair…",
+                text = "Loading catalog…",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -123,20 +123,20 @@ private fun CatalogContent(
                 )
             }
         }
-        if (uiState.recentlyAdded.isNotEmpty()) {
-            item("recently-added") {
+        if (uiState.action.isNotEmpty()) {
+            item("action") {
                 GameRail(
-                    title = "Recently Added",
-                    games = uiState.recentlyAdded,
+                    title = "Action Games",
+                    games = uiState.action,
                     onGameClick = { onOpenGame(it.id) },
                 )
             }
         }
-        if (uiState.popularRetro.isNotEmpty()) {
-            item("popular-retro") {
+        if (uiState.popularClassics.isNotEmpty()) {
+            item("popular-classics") {
                 GameRail(
-                    title = "Popular on N64",
-                    games = uiState.popularRetro,
+                    title = "Popular Classics",
+                    games = uiState.popularClassics,
                     onGameClick = { onOpenGame(it.id) },
                 )
             }

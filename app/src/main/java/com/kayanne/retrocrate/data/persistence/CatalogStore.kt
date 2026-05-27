@@ -21,7 +21,9 @@ import kotlinx.serialization.json.Json
 // (kotlinx-serialization will happily decode old shapes but fields may be missing).
 object CatalogStore {
 
-    private const val CURRENT_VERSION = 1
+    // Bump on any change to how Game is built so old snapshots get re-fetched.
+    // v1 = Vimm's-shaped catalog (no genres). v2 = OpenVGDB-shaped (genres, descriptions, etc.).
+    private const val CURRENT_VERSION = 2
     private lateinit var dataStore: DataStore<Preferences>
 
     private val json = Json {

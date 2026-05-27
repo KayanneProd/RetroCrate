@@ -2,8 +2,8 @@ package com.kayanne.retrocrate.feature.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.data.repository.LoadStatus
-import com.kayanne.retrocrate.data.repository.VimmsGameRepository
 import com.kayanne.retrocrate.domain.model.Game
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,19 +13,19 @@ import kotlinx.coroutines.launch
 
 class HomeViewModel : ViewModel() {
 
-    private val repository = VimmsGameRepository
+    private val repository = GameCatalogRepository
 
     val uiState: StateFlow<HomeUiState> = combine(
         repository.status,
         repository.observeFeatured(),
-        repository.observeRecentlyAdded(),
-        repository.observePopularRetro(),
-    ) { status, featured, recent, popular ->
+        repository.observeAction(),
+        repository.observePopularClassics(),
+    ) { status, featured, action, popular ->
         HomeUiState(
             status = status,
             featured = featured,
-            recentlyAdded = recent,
-            popularRetro = popular,
+            action = action,
+            popularClassics = popular,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -39,7 +39,7 @@ class HomeViewModel : ViewModel() {
 
     fun refresh() {
         viewModelScope.launch {
-            repository.ensureLoaded(forceRefresh = true)
+            repository.ensureLoaded()
         }
     }
 }
@@ -47,6 +47,6 @@ class HomeViewModel : ViewModel() {
 data class HomeUiState(
     val status: LoadStatus = LoadStatus.Idle,
     val featured: List<Game> = emptyList(),
-    val recentlyAdded: List<Game> = emptyList(),
-    val popularRetro: List<Game> = emptyList(),
+    val action: List<Game> = emptyList(),
+    val popularClassics: List<Game> = emptyList(),
 )

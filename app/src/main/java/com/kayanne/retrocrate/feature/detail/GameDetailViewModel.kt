@@ -4,37 +4,47 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
+import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.data.repository.LoadStatus
-import com.kayanne.retrocrate.data.repository.VimmsGameRepository
 import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.navigation.GameDetailRoute
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class GameDetailViewModel(
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
-    private val repository = VimmsGameRepository
+    private val repository = GameCatalogRepository
     private val gameId: String = savedStateHandle.toRoute<GameDetailRoute>().gameId
 
-    private val _uiState = MutableStateFlow<GameDetailUiState>(GameDetailUiState.Loading)
-    val uiState: StateFlow<GameDetailUiState> = _uiState.asStateFlow()
+    private val _initialError = MutableStateFlow<String?>(null)
+
+    val uiState: StateFlow<GameDetailUiState> = combine(
+        repository.observeGame(gameId),
+        repository.status,
+        _initialError,
+    ) { game, status, errorMessage ->
+        when {
+            game != null -> GameDetailUiState.Loaded(game)
+            status is LoadStatus.Loading -> GameDetailUiState.Loading
+            errorMessage != null -> GameDetailUiState.Error(errorMessage)
+            status is LoadStatus.Error -> GameDetailUiState.Error(status.message)
+            else -> GameDetailUiState.NotFound(gameId)
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = GameDetailUiState.Loading,
+    )
 
     init {
         viewModelScope.launch {
             repository.ensureLoaded()
-            val game = repository.getById(gameId)
-            _uiState.value = when {
-                game != null -> GameDetailUiState.Loaded(game)
-                repository.status.value is LoadStatus.Error -> {
-                    val msg = (repository.status.value as LoadStatus.Error).message
-                    GameDetailUiState.Error(msg)
-                }
-                else -> GameDetailUiState.NotFound(gameId)
-            }
         }
     }
 }
