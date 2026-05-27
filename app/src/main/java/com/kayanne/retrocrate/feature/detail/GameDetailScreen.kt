@@ -1,5 +1,8 @@
 package com.kayanne.retrocrate.feature.detail
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +29,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -33,6 +37,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,7 +58,10 @@ import com.kayanne.retrocrate.core.designsystem.Spacing
 import com.kayanne.retrocrate.core.ui.EmptyState
 import com.kayanne.retrocrate.core.ui.MetadataChip
 import com.kayanne.retrocrate.core.ui.SourceRow
+import com.kayanne.retrocrate.data.persistence.SettingsStore
+import com.kayanne.retrocrate.domain.model.DownloadState
 import com.kayanne.retrocrate.domain.model.Game
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,6 +74,32 @@ fun GameDetailScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // SAF folder picker — launched when Install is pressed without a folder set.
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            context.contentResolver.takePersistableUriPermission(uri, flags)
+            scope.launch {
+                SettingsStore.setStorageTreeUri(uri.toString())
+                viewModel.onInstall(context)
+            }
+        }
+    }
+
+    // Show snackbar when a download finishes successfully.
+    LaunchedEffect(uiState) {
+        val download = (uiState as? GameDetailUiState.Loaded)?.downloadState
+        if (download is DownloadState.Completed) {
+            snackbarHostState.showSnackbar("Download complete.")
+        } else if (download is DownloadState.Failed) {
+            snackbarHostState.showSnackbar(download.reason)
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -107,11 +141,15 @@ fun GameDetailScreen(
                 )
                 is GameDetailUiState.Loaded -> SplitDetailContent(
                     game = state.game,
+                    downloadState = state.downloadState,
                     onInstallClick = {
                         scope.launch {
-                            snackbarHostState.showSnackbar(
-                                message = "Download queued — real downloads land in Branch 5.",
-                            )
+                            val storedUri = SettingsStore.observeStorageTreeUri().first()
+                            if (storedUri.isNullOrBlank()) {
+                                folderPicker.launch(null)
+                            } else {
+                                viewModel.onInstall(context)
+                            }
                         }
                     },
                 )
@@ -130,6 +168,7 @@ private fun LoadingContent() {
 @Composable
 private fun SplitDetailContent(
     game: Game,
+    downloadState: DownloadState,
     onInstallClick: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxSize()) {
@@ -142,6 +181,7 @@ private fun SplitDetailContent(
         )
         InfoPanel(
             game = game,
+            downloadState = downloadState,
             onInstallClick = onInstallClick,
             modifier = Modifier
                 .weight(0.55f)
@@ -194,6 +234,7 @@ private fun ArtPanel(
 @Composable
 private fun InfoPanel(
     game: Game,
+    downloadState: DownloadState,
     onInstallClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -239,19 +280,64 @@ private fun InfoPanel(
             }
         }
         Spacer(Modifier.height(Spacing.m))
+        InstallButton(downloadState = downloadState, onClick = onInstallClick)
+    }
+}
+
+@Composable
+private fun InstallButton(downloadState: DownloadState, onClick: () -> Unit) {
+    val (label, enabled) = when (downloadState) {
+        DownloadState.NotStarted -> "Install" to true
+        is DownloadState.Queued -> "Queued…" to false
+        is DownloadState.InProgress -> {
+            val total = downloadState.bytesTotal
+            val pct = if (total != null && total > 0) {
+                ((downloadState.bytesDone * 100) / total).toInt()
+            } else null
+            (if (pct != null) "Downloading… $pct%" else "Downloading…") to false
+        }
+        is DownloadState.Failed -> "Retry" to true
+        is DownloadState.Completed -> "Installed ✓" to false
+    }
+
+    Column {
+        if (downloadState is DownloadState.InProgress) {
+            val total = downloadState.bytesTotal
+            if (total != null && total > 0) {
+                LinearProgressIndicator(
+                    progress = { (downloadState.bytesDone.toFloat() / total).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = Spacing.xs),
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = Spacing.xs),
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+        }
         Button(
-            onClick = onInstallClick,
+            onClick = onClick,
+            enabled = enabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.secondary,
+                containerColor = if (downloadState is DownloadState.Completed) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.secondary
+                },
                 contentColor = MaterialTheme.colorScheme.onSecondary,
             ),
             shape = RoundedCornerShape(8.dp),
         ) {
             Text(
-                text = "Install",
+                text = label,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
             )

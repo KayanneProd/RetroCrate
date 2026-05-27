@@ -6,6 +6,7 @@ import android.util.Log
 import com.kayanne.retrocrate.data.source.LibretroThumbnails
 import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.domain.model.Platform
+import com.kayanne.retrocrate.domain.model.Source
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -62,10 +63,12 @@ object OpenVgdbSource {
 
         val sql = """
             SELECT R.releaseTitleName, R.releaseGenre, R.releaseDescription,
-                   R.releaseDeveloper, R.releasePublisher, R.releaseDate, R.releaseRegion
+                   R.releaseDeveloper, R.releasePublisher, R.releaseDate, REG.regionName,
+                   R.releaseCoverFront, M.romFileName
             FROM RELEASES R
             JOIN ROMs M ON R.romID = M.romID
             JOIN SYSTEMS S ON M.systemID = S.systemID
+            LEFT JOIN REGIONS REG ON R.regionLocalizedID = REG.regionID
             WHERE S.systemShortName = ?
               AND R.releaseTitleName IS NOT NULL
         """.trimIndent()
@@ -88,6 +91,8 @@ object OpenVgdbSource {
                         publisher = c.getString(4)?.takeIf { it.isNotBlank() },
                         year = c.getString(5)?.take(4)?.toIntOrNull()?.takeIf { it in 1970..2030 },
                         region = c.getString(6),
+                        coverUrl = c.getString(7)?.takeIf { it.isNotBlank() },
+                        romFileName = c.getString(8)?.takeIf { it.isNotBlank() },
                     )
                 )
             }
@@ -111,9 +116,21 @@ object OpenVgdbSource {
                 publisher = row.publisher,
                 genres = row.genres,
                 description = row.description,
-                boxArtUrl = LibretroThumbnails.boxArtUrl(platform, row.title),
+                // Prefer OpenVGDB's curated cover URL (90%+ coverage), fall back to
+                // libretro-thumbnails (which often 404s for less common titles).
+                boxArtUrl = row.coverUrl ?: LibretroThumbnails.boxArtUrl(platform, row.title),
                 heroArtUrl = LibretroThumbnails.snapUrl(platform, row.title),
-                sources = emptyList(),
+                sources = if (row.romFileName != null) {
+                    listOf(
+                        Source(
+                            id = "openvgdb-rom:${row.romFileName}",
+                            siteName = "Internet Archive",
+                            region = row.region,
+                            sizeBytes = null,
+                            resolveUrl = row.romFileName, // No-Intro filename, used by IaResolver
+                        ),
+                    )
+                } else emptyList(),
             )
         }
     }
@@ -126,6 +143,8 @@ object OpenVgdbSource {
         val publisher: String?,
         val year: Int?,
         val region: String?,
+        val coverUrl: String?,
+        val romFileName: String?,
     )
 
     private fun mergeRegionalRows(rows: List<RegionalRow>): RegionalRow {
@@ -139,6 +158,8 @@ object OpenVgdbSource {
             genres = primary.genres.ifEmpty {
                 sorted.firstOrNull { it.genres.isNotEmpty() }?.genres.orEmpty()
             },
+            coverUrl = primary.coverUrl ?: sorted.firstNotNullOfOrNull { it.coverUrl },
+            romFileName = primary.romFileName ?: sorted.firstNotNullOfOrNull { it.romFileName },
         )
     }
 
@@ -172,21 +193,21 @@ object OpenVgdbSource {
             }
         }
 
+    // Mappings verified against OpenVGDB v29.0 SYSTEMS table. Dreamcast and PS2 are NOT in
+    // OpenVGDB — those platforms get null and drop out of SUPPORTED_PLATFORMS.
     private fun systemShortNameFor(platform: Platform): String? = when (platform) {
         Platform.NES -> "NES"
         Platform.SNES -> "SNES"
         Platform.N64 -> "N64"
-        Platform.GAMECUBE -> "GameCube"
+        Platform.GAMECUBE -> "NGC"
         Platform.WII -> "Wii"
         Platform.GAME_BOY -> "GB"
         Platform.GAME_BOY_COLOR -> "GBC"
         Platform.GAME_BOY_ADVANCE -> "GBA"
-        Platform.NINTENDO_DS -> "DS"
-        Platform.GENESIS -> "Genesis"
+        Platform.NINTENDO_DS -> "NDS"
+        Platform.GENESIS -> "MD"
         Platform.SATURN -> "Saturn"
-        Platform.DREAMCAST -> "Dreamcast"
         Platform.PS1 -> "PSX"
-        Platform.PS2 -> "PS2"
         Platform.PSP -> "PSP"
         else -> null
     }

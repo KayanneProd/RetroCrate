@@ -1,14 +1,16 @@
 package com.kayanne.retrocrate.feature.detail
 
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
+import com.kayanne.retrocrate.data.download.DownloadCoordinator
 import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.data.repository.LoadStatus
+import com.kayanne.retrocrate.domain.model.DownloadState
 import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.navigation.GameDetailRoute
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -22,17 +24,15 @@ class GameDetailViewModel(
     private val repository = GameCatalogRepository
     private val gameId: String = savedStateHandle.toRoute<GameDetailRoute>().gameId
 
-    private val _initialError = MutableStateFlow<String?>(null)
-
     val uiState: StateFlow<GameDetailUiState> = combine(
         repository.observeGame(gameId),
         repository.status,
-        _initialError,
-    ) { game, status, errorMessage ->
+        DownloadCoordinator.downloads,
+    ) { game, status, downloads ->
+        val downloadState = downloads[gameId] ?: DownloadState.NotStarted
         when {
-            game != null -> GameDetailUiState.Loaded(game)
+            game != null -> GameDetailUiState.Loaded(game = game, downloadState = downloadState)
             status is LoadStatus.Loading -> GameDetailUiState.Loading
-            errorMessage != null -> GameDetailUiState.Error(errorMessage)
             status is LoadStatus.Error -> GameDetailUiState.Error(status.message)
             else -> GameDetailUiState.NotFound(gameId)
         }
@@ -43,15 +43,21 @@ class GameDetailViewModel(
     )
 
     init {
-        viewModelScope.launch {
-            repository.ensureLoaded()
-        }
+        viewModelScope.launch { repository.ensureLoaded() }
+    }
+
+    fun onInstall(context: Context) {
+        val game = (uiState.value as? GameDetailUiState.Loaded)?.game ?: return
+        DownloadCoordinator.startDownload(game, context)
     }
 }
 
 sealed interface GameDetailUiState {
     data object Loading : GameDetailUiState
-    data class Loaded(val game: Game) : GameDetailUiState
+    data class Loaded(
+        val game: Game,
+        val downloadState: DownloadState = DownloadState.NotStarted,
+    ) : GameDetailUiState
     data class NotFound(val gameId: String) : GameDetailUiState
     data class Error(val message: String) : GameDetailUiState
 }

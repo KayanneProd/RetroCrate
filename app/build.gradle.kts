@@ -76,8 +76,9 @@ dependencies {
     // Navigation
     implementation(libs.androidx.navigation.compose)
 
-    // DataStore
+    // DataStore + SAF helpers
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.documentfile)
 
     // Network
     implementation(libs.retrofit)
