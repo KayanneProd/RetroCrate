@@ -41,7 +41,7 @@ fun LibraryScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    LaunchedEffect(uiState.storageUri) {
+    LaunchedEffect(uiState.configuredPlatforms) {
         viewModel.refresh(context)
     }
 
@@ -51,32 +51,36 @@ fun LibraryScreen(
             .padding(contentPadding)
             .padding(Spacing.l),
     ) {
-        if (uiState.storageUri == null) {
-            EmptyLibraryHint(reason = "Pick a download folder in Settings to start your library.")
-        } else if (uiState.files.isEmpty()) {
-            EmptyLibraryHint(reason = "No downloads yet. Tap Install on any game to fill this in.")
-        } else {
-            Text(
-                text = "${uiState.files.size} files in your library",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(Spacing.m))
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(Spacing.s),
-            ) {
-                items(uiState.files, key = { it.uri }) { file ->
-                    LibraryRow(
-                        file = file,
-                        onOpen = {
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(Uri.parse(file.uri), "application/octet-stream")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            runCatching { context.startActivity(intent) }
-                        },
-                    )
+        when {
+            uiState.configuredPlatforms.isEmpty() -> {
+                EmptyLibraryHint("Pick a download folder for at least one platform in Settings.")
+            }
+            uiState.files.isEmpty() -> {
+                EmptyLibraryHint("No downloads yet. Tap Install on any game to fill this in.")
+            }
+            else -> {
+                Text(
+                    text = "${uiState.files.size} files across ${uiState.configuredPlatforms.size} platforms",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(Spacing.m))
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.s),
+                ) {
+                    items(uiState.files, key = { it.uri }) { file ->
+                        LibraryRow(
+                            file = file,
+                            onOpen = {
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(Uri.parse(file.uri), "application/octet-stream")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                runCatching { context.startActivity(intent) }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -107,7 +111,7 @@ private fun LibraryRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = formatSize(file.sizeBytes),
+                    text = "${file.platform.displayName} · ${formatSize(file.sizeBytes)}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

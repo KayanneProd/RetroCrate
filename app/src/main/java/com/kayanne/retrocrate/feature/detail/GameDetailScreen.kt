@@ -61,7 +61,6 @@ import com.kayanne.retrocrate.core.ui.SourceRow
 import com.kayanne.retrocrate.data.persistence.SettingsStore
 import com.kayanne.retrocrate.domain.model.DownloadState
 import com.kayanne.retrocrate.domain.model.Game
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,7 +75,8 @@ fun GameDetailScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // SAF folder picker — launched when Install is pressed without a folder set.
+    // SAF folder picker — launched when Install is pressed for a platform that has no folder
+    // configured yet. Saves the picked URI as that platform's folder, then starts the install.
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { uri: Uri? ->
@@ -85,8 +85,11 @@ fun GameDetailScreen(
                 android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             context.contentResolver.takePersistableUriPermission(uri, flags)
             scope.launch {
-                SettingsStore.setStorageTreeUri(uri.toString())
-                viewModel.onInstall(context)
+                val game = (uiState as? GameDetailUiState.Loaded)?.game
+                if (game != null) {
+                    SettingsStore.setPlatformFolder(game.platform, uri.toString())
+                    viewModel.onInstall(context)
+                }
             }
         }
     }
@@ -144,7 +147,7 @@ fun GameDetailScreen(
                     downloadState = state.downloadState,
                     onInstallClick = {
                         scope.launch {
-                            val storedUri = SettingsStore.observeStorageTreeUri().first()
+                            val storedUri = SettingsStore.folderFor(state.game.platform)
                             if (storedUri.isNullOrBlank()) {
                                 folderPicker.launch(null)
                             } else {

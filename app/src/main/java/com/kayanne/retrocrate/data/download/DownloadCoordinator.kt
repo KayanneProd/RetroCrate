@@ -15,7 +15,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import okhttp3.Request
 
@@ -53,15 +52,25 @@ object DownloadCoordinator {
     }
 
     private suspend fun runDownload(game: Game, context: Context) {
-        val storageUriString = SettingsStore.observeStorageTreeUri().first()
+        val storageUriString = SettingsStore.folderFor(game.platform)
         if (storageUriString.isNullOrBlank()) {
-            update(game.id, DownloadState.Failed("Pick a download folder in Settings first."))
+            update(
+                game.id,
+                DownloadState.Failed(
+                    "Pick a ${game.platform.displayName} folder in Settings first."
+                ),
+            )
             return
         }
         val storageUri = Uri.parse(storageUriString)
         val tree = DocumentFile.fromTreeUri(context, storageUri)
         if (tree == null || !tree.canWrite()) {
-            update(game.id, DownloadState.Failed("The chosen download folder is no longer accessible."))
+            update(
+                game.id,
+                DownloadState.Failed(
+                    "Your ${game.platform.displayName} folder is no longer accessible. Pick it again in Settings."
+                ),
+            )
             return
         }
 
