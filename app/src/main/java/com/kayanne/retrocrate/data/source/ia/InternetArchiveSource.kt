@@ -45,28 +45,38 @@ object InternetArchiveSource : RomSource {
             resolveByTitleId(tid)?.let { return@withContext it }
         }
 
-        val docs = search(query).filterNot { isJunkItem(it) }
+        val docs = search(query).filterNot { isJunkItem(it) }.take(12)
         if (docs.isEmpty()) {
             Log.w(TAG, "No IA search results for \"${query.title}\"")
             return@withContext null
         }
-        for (doc in docs.take(12)) {
-            val files = metadataFiles(doc.identifier)
-            if (files.isEmpty()) continue
 
-            // Strategy 1: an exact / strongly-scored file inside the item.
+        val filesByDoc = HashMap<String, List<IaFile>>()
+        fun filesFor(doc: IaSearchDoc) = filesByDoc.getOrPut(doc.identifier) { metadataFiles(doc.identifier) }
+
+        // Strategy 1 (all items first): an exact / strongly-scored file that carries the requested
+        // platform's extension. This is the strongest, platform-safe signal, so a real N64 .z64 in
+        // any item beats a title-only archive guess from a Game Boy Color item of the same name.
+        for (doc in docs) {
+            val files = filesFor(doc)
+            if (files.isEmpty()) continue
             RomMatcher.bestMatch(
                 title = query.title,
+                platform = query.platform,
                 romFileName = query.romFileName,
                 preferredRegion = query.preferredRegion,
                 candidates = files.map { RomMatcher.Candidate(it.name, it.size?.toLongOrNull()) },
             )?.let { return@withContext download(doc.identifier, it.filename, it.sizeBytes) }
+        }
 
-            // Strategy 2: the item itself is clearly this game — take its main payload.
-            if (doc.title != null && RomMatcher.titlesMatch(doc.title, query.title)) {
-                pickPayload(files, query.platform)?.let {
-                    return@withContext download(doc.identifier, it.name, it.size?.toLongOrNull())
-                }
+        // Strategy 2: the item's *title* clearly matches — take its main payload (how big disc/Switch
+        // dumps live on IA, packaged as one archive per item). pickPayload still enforces platform.
+        for (doc in docs) {
+            if (doc.title == null || !RomMatcher.titlesMatch(doc.title, query.title)) continue
+            val files = filesFor(doc)
+            if (files.isEmpty()) continue
+            pickPayload(files, query.platform)?.let {
+                return@withContext download(doc.identifier, it.name, it.size?.toLongOrNull())
             }
         }
         Log.w(TAG, "No IA item confidently matched \"${query.title}\"")
@@ -80,15 +90,23 @@ object InternetArchiveSource : RomSource {
     }
 
     // Largest genuine payload in an item, ignoring IA's derived sidecar files (_meta.xml, torrents,
-    // checksums, etc.). Accepts ROM extensions and archive wrappers — EXCEPT for Switch, where we
-    // require a direct .nsp/.xci/.nsz/.xcz: IA's Switch "dumps" are routinely unpacked CDN folders
-    // (.app files) or Wii U versions inside a multi-GB archive with no usable ROM, and streaming all
-    // of it only to find nothing is far worse than honestly reporting "no source found".
+    // checksums, etc.). A file carrying this platform's own extension always wins — so a title-matched
+    // item that turns out to be the wrong console's version (its files don't fit the platform) is
+    // rejected, not downloaded. Only when no native-extension file exists do we fall back to a generic
+    // archive wrapper (how disc dumps ship). EXCEPT for Switch: there we require a direct
+    // .nsp/.xci/.nsz/.xcz, because IA's Switch "dumps" are routinely unpacked CDN folders (.app files)
+    // or Wii U versions inside a multi-GB archive with no usable ROM — streaming all of it only to
+    // find nothing is far worse than honestly reporting "no source found".
     private fun pickPayload(files: List<IaFile>, platform: Platform): IaFile? {
-        val allowArchives = platform != Platform.SWITCH
-        return files.asSequence()
-            .filter { !isSidecar(it.name) }
-            .filter { RomMatcher.hasRomExtension(it.name) || (allowArchives && extensionOf(it.name) in ARCHIVE_EXTENSIONS) }
+        val platformExts = RomMatcher.extensionsFor(platform)
+        val real = files.filterNot { isSidecar(it.name) }
+        val native = real.filter { extensionOf(it.name) in platformExts }
+        val pool = when {
+            native.isNotEmpty() -> native
+            platform == Platform.SWITCH -> emptyList()
+            else -> real.filter { extensionOf(it.name) in ARCHIVE_EXTENSIONS }
+        }
+        return pool
             // Prefer an English/USA copy, then fall back to the largest payload.
             .sortedWith(
                 compareBy<IaFile> { RomMatcher.regionRank(it.name) }

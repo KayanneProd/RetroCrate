@@ -23,13 +23,17 @@ object VimmsParser {
     }
 
     private fun parseRow(row: Element): VimmsVaultEntry? {
-        val anchor = row.select("a[href^=/vault/]").firstOrNull() ?: return null
-        val href = anchor.attr("href")
-        val vimmsId = href.removePrefix("/vault/").trim()
-        if (vimmsId.isEmpty() || !vimmsId.all { it.isDigit() }) return null
+        // Each game row leads with an empty placeholder anchor (`<a href="/vault/999999"></a>`, a
+        // scroll target); the real game link is the next `/vault/<id>` anchor that actually carries
+        // the title. Blindly taking the first anchor matched the placeholder — its title is blank —
+        // and dropped every row, so the whole listing parsed to nothing.
+        val anchor = row.select("a[href^=/vault/]").firstOrNull { a ->
+            val id = a.attr("href").removePrefix("/vault/").trim()
+            id.isNotEmpty() && id.all { it.isDigit() } && a.text().isNotBlank()
+        } ?: return null
 
+        val vimmsId = anchor.attr("href").removePrefix("/vault/").trim()
         val title = anchor.text().trim()
-        if (title.isEmpty()) return null
 
         val cells = row.select("td")
         val region = extractRegion(cells)

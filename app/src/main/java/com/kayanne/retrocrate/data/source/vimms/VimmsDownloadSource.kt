@@ -30,12 +30,18 @@ object VimmsDownloadSource : RomSource {
         val entries = runCatching {
             fetchHtml(listingUrl)?.let { VimmsParser.parseVaultListing(it) }
         }.getOrNull().orEmpty()
-        if (entries.isEmpty()) return@withContext null
+        if (entries.isEmpty()) {
+            Log.w(TAG, "No vault entries parsed for \"${query.title}\" at $listingUrl (parser drift?)")
+            return@withContext null
+        }
 
         val entry = entries
             .filter { RomMatcher.titlesMatch(it.title, query.title) }
             .minByOrNull { regionRank(it.region) }
-            ?: return@withContext null
+            ?: run {
+                Log.w(TAG, "No vault entry matched \"${query.title}\" among ${entries.size} in section $section")
+                return@withContext null
+            }
 
         val pageUrl = VimmsPaths.gameDetailUrl(entry.vimmsId)
         val pageHtml = runCatching { fetchHtml(pageUrl) }.getOrNull() ?: return@withContext null

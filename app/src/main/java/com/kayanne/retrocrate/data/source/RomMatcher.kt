@@ -1,5 +1,7 @@
 package com.kayanne.retrocrate.data.source
 
+import com.kayanne.retrocrate.domain.model.Platform
+
 // Pure, network-free matching logic shared by every RomSource. This is the fix for the long-
 // standing "Internet Archive handed back a random file" bug: instead of grabbing the first file
 // with a ROM extension out of a multi-game item, we score each candidate against the game we
@@ -26,6 +28,38 @@ object RomMatcher {
         "zip", "7z", "rar",
     )
 
+    // Generic archive wrappers — a ROM of any platform can hide inside one, so they can't be typed
+    // by extension. They're only ever a fallback, behind a file that carries this platform's own
+    // extension.
+    private val ARCHIVE_WRAPPERS = setOf("zip", "7z", "rar")
+
+    // The bare-ROM extensions that belong to each platform. The single guard against downloading the
+    // wrong console's version of a multi-platform title (e.g. an N64 request grabbing the Game Boy
+    // Color "A Bug's Life" .gbc). Disc systems share container extensions (.iso/.bin/.cue/.chd), which
+    // is unavoidable and fine — title + item matching disambiguates those; the cartridge systems that
+    // actually collide on title are cleanly separated here.
+    fun extensionsFor(platform: Platform): Set<String> = when (platform) {
+        Platform.NES -> setOf("nes", "fds", "unf")
+        Platform.SNES -> setOf("smc", "sfc")
+        Platform.N64 -> setOf("z64", "n64", "v64")
+        Platform.GAMECUBE -> setOf("iso", "gcm", "gcz", "rvz")
+        Platform.WII -> setOf("iso", "wbfs", "rvz", "wad", "gcz")
+        Platform.WII_U -> setOf("wud", "wux")
+        Platform.SWITCH -> setOf("nsp", "xci", "nsz", "xcz")
+        Platform.GAME_BOY -> setOf("gb")
+        Platform.GAME_BOY_COLOR -> setOf("gbc")
+        Platform.GAME_BOY_ADVANCE -> setOf("gba", "srl")
+        Platform.NINTENDO_DS -> setOf("nds", "dsi", "srl")
+        Platform.NINTENDO_3DS -> setOf("3ds", "cia")
+        Platform.GENESIS -> setOf("md", "smd", "gen", "32x", "bin")
+        Platform.SATURN -> setOf("sat", "cue", "bin", "iso", "chd", "img")
+        Platform.DREAMCAST -> setOf("cdi", "gdi", "chd")
+        Platform.PS1 -> setOf("bin", "cue", "img", "pbp", "chd", "iso")
+        Platform.PS2 -> setOf("iso", "bin", "cue", "chd", "cso")
+        Platform.PSP -> setOf("iso", "cso", "pbp", "chd")
+        Platform.PS_VITA -> setOf("vpk")
+    }
+
     fun hasRomExtension(filename: String): Boolean =
         extensionOf(filename) in ROM_EXTENSIONS
 
@@ -39,17 +73,35 @@ object RomMatcher {
         return jaccard(na.split(' ').toSet(), nb.split(' ').toSet()) >= MATCH_THRESHOLD
     }
 
-    // Picks the single best file for the requested game, or null if nothing clears the bar.
+    // Picks the single best file for the requested game on the requested platform, or null if
+    // nothing clears the bar.
     // 1. Exact No-Intro/Redump filename match always wins (can't be the wrong game).
-    // 2. Otherwise score the normalized title against each ROM-extension candidate and take the
-    //    best — but only if it clears MATCH_THRESHOLD.
+    // 2. Otherwise score the normalized title against each candidate and take the best — but only if
+    //    it clears MATCH_THRESHOLD.
+    // Platform is enforced first: only files carrying this platform's own extension are considered,
+    // so an N64 request can never resolve to the Game Boy Color copy of the same title. Generic
+    // archives (.zip/.7z/.rar), which can't be platform-typed by extension, are tried only when no
+    // native-extension file matches.
     fun bestMatch(
         title: String,
+        platform: Platform,
         romFileName: String?,
         preferredRegion: String,
         candidates: List<Candidate>,
     ): Candidate? {
-        val roms = candidates.filter { hasRomExtension(it.filename) }
+        val platformExts = extensionsFor(platform)
+        val native = candidates.filter { extensionOf(it.filename) in platformExts }
+        val archives = candidates.filter { extensionOf(it.filename) in ARCHIVE_WRAPPERS }
+        return matchWithin(native, title, romFileName, preferredRegion)
+            ?: matchWithin(archives, title, romFileName, preferredRegion)
+    }
+
+    private fun matchWithin(
+        roms: List<Candidate>,
+        title: String,
+        romFileName: String?,
+        preferredRegion: String,
+    ): Candidate? {
         if (roms.isEmpty()) return null
 
         if (romFileName != null) {

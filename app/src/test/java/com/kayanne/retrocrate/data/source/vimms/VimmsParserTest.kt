@@ -83,6 +83,37 @@ class VimmsParserTest {
     }
 
     @Test
+    fun skipsEmptyPlaceholderAnchorAndPicksRealGameLink() {
+        // Mirrors live Vimm's markup: every row leads with an empty placeholder anchor
+        // (`/vault/999999`, a scroll target) before the real game link. The old parser took the
+        // first anchor, matched the placeholder (blank title), and dropped every row.
+        val html = """
+            <table class="hovertable striped">
+              <tr><th>Title</th></tr>
+              <tr>
+                <td style="width:auto"><a href="/vault/999999"></a><a href= "/vault/2552" onmouseover="buildTooltip(this, 2552, 320, 240)">Bug&#039;s Life, A</a></td>
+                <td><img src="/images/flags/usa.png" class="flag" title="USA"></td>
+                <td>1.0</td>
+                <td><a href="/vault/?p=rating&amp;id=2552">7.5</a></td>
+              </tr>
+              <tr>
+                <td style="width:auto"><a href="/vault/999999"></a><a href= "/vault/2533" onmouseover="buildTooltip(this, 2533, 320, 240)">Banjo-Kazooie</a></td>
+                <td><img src="/images/flags/usa.png" class="flag" title="USA"></td>
+                <td>1.1</td>
+              </tr>
+            </table>
+        """.trimIndent()
+
+        val entries = VimmsParser.parseVaultListing(html)
+        assertEquals(2, entries.size)
+        assertEquals("2552", entries[0].vimmsId)
+        assertEquals("Bug's Life, A", entries[0].title)
+        assertEquals("USA", entries[0].region)
+        assertEquals("2533", entries[1].vimmsId)
+        assertEquals("Banjo-Kazooie", entries[1].title)
+    }
+
+    @Test
     fun ignoresHrefsThatAreNotNumericVaultLinks() {
         val html = """
             <table>

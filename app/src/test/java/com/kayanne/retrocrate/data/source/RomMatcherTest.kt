@@ -1,6 +1,7 @@
 package com.kayanne.retrocrate.data.source
 
 import com.kayanne.retrocrate.data.source.RomMatcher.Candidate
+import com.kayanne.retrocrate.domain.model.Platform
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -16,6 +17,7 @@ class RomMatcherTest {
         // The bug: an IA item bundling a whole No-Intro set used to return the first ROM file.
         val match = RomMatcher.bestMatch(
             title = "Super Mario 64",
+            platform = Platform.N64,
             romFileName = "Super Mario 64 (USA).z64",
             preferredRegion = "USA",
             candidates = files(
@@ -33,6 +35,7 @@ class RomMatcherTest {
         // Previously returned the first ROM-extension file regardless of game.
         val match = RomMatcher.bestMatch(
             title = "Super Mario 64",
+            platform = Platform.N64,
             romFileName = "Super Mario 64 (USA).z64",
             preferredRegion = "USA",
             candidates = files(
@@ -48,6 +51,7 @@ class RomMatcherTest {
     fun `matches title when wrapped in a zip`() {
         val match = RomMatcher.bestMatch(
             title = "Chrono Trigger",
+            platform = Platform.SNES,
             romFileName = "Chrono Trigger (USA).sfc",
             preferredRegion = "USA",
             candidates = files("Chrono Trigger (USA).sfc.zip"),
@@ -59,6 +63,7 @@ class RomMatcherTest {
     fun `matches by title alone when no rom filename is known`() {
         val match = RomMatcher.bestMatch(
             title = "The Legend of Zelda: Ocarina of Time",
+            platform = Platform.N64,
             romFileName = null,
             preferredRegion = "USA",
             candidates = files(
@@ -74,6 +79,7 @@ class RomMatcherTest {
         // "Mario Kart 64" must not match "Super Mario 64".
         val match = RomMatcher.bestMatch(
             title = "Mario Kart 64",
+            platform = Platform.N64,
             romFileName = null,
             preferredRegion = "USA",
             candidates = files("Super Mario 64 (USA).z64"),
@@ -85,6 +91,7 @@ class RomMatcherTest {
     fun `ignores non-rom files`() {
         val match = RomMatcher.bestMatch(
             title = "Super Metroid",
+            platform = Platform.SNES,
             romFileName = null,
             preferredRegion = "USA",
             candidates = files(
@@ -94,6 +101,37 @@ class RomMatcherTest {
             ),
         )
         assertEquals("Super Metroid (Japan, USA).sfc", match?.filename)
+    }
+
+    @Test
+    fun `picks the requested platform's rom over another platform of the same title`() {
+        // The reported bug: downloading "A Bug's Life" for N64 fetched the Game Boy Color version,
+        // because matching ignored platform. The N64 request must take the .z64, never the .gbc.
+        val match = RomMatcher.bestMatch(
+            title = "A Bug's Life",
+            platform = Platform.N64,
+            romFileName = null,
+            preferredRegion = "USA",
+            candidates = files(
+                "A Bug's Life (USA).gbc",
+                "A Bug's Life (USA).z64",
+            ),
+        )
+        assertEquals("A Bug's Life (USA).z64", match?.filename)
+    }
+
+    @Test
+    fun `rejects a wrong-platform rom when the requested platform is absent`() {
+        // If only the Game Boy Color copy exists, an N64 request must resolve to nothing rather than
+        // hand back the GBC ROM. Honest "not found" lets the platform-correct source (Vimm's) try.
+        val match = RomMatcher.bestMatch(
+            title = "A Bug's Life",
+            platform = Platform.N64,
+            romFileName = null,
+            preferredRegion = "USA",
+            candidates = files("A Bug's Life (USA).gbc"),
+        )
+        assertNull(match)
     }
 
     @Test
@@ -142,6 +180,7 @@ class RomMatcherTest {
     fun `switch nsp with title-id brackets matches`() {
         val match = RomMatcher.bestMatch(
             title = "Super Mario Odyssey",
+            platform = Platform.SWITCH,
             romFileName = "Super Mario Odyssey (World).nsp",
             preferredRegion = "World",
             candidates = files("Super Mario Odyssey [0100000000010000][v0].nsp"),
@@ -153,6 +192,7 @@ class RomMatcherTest {
     fun `prefers USA over Japan when both match by title`() {
         val match = RomMatcher.bestMatch(
             title = "Chrono Trigger",
+            platform = Platform.SNES,
             romFileName = null,
             preferredRegion = "USA",
             candidates = files(
@@ -168,6 +208,7 @@ class RomMatcherTest {
     fun `falls back to Japan when no English copy exists`() {
         val match = RomMatcher.bestMatch(
             title = "Mother 3",
+            platform = Platform.GAME_BOY_ADVANCE,
             romFileName = null,
             preferredRegion = "USA",
             candidates = files("Mother 3 (Japan).gba"),
@@ -179,6 +220,7 @@ class RomMatcherTest {
     fun `switch nsp extension is recognized`() {
         val match = RomMatcher.bestMatch(
             title = "Super Mario Odyssey",
+            platform = Platform.SWITCH,
             romFileName = "Super Mario Odyssey (World).nsp",
             preferredRegion = "World",
             candidates = files("Super Mario Odyssey (World).nsp"),
