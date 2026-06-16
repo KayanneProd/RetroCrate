@@ -34,3 +34,12 @@ desktop.ini
 *.log
 CLAUDE.md
 LLM-CONTEXT.md
+
+# --- Stray Node artifacts (not part of this Android project) ---
+node_modules/
+package-lock.json
+package.json
+
+# --- Local scratch (device screenshots, UI dumps) ---
+_rp5_*.png
+_ui.xml

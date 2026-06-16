@@ -3,7 +3,6 @@ package com.kayanne.retrocrate.data.source.openvgdb
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.util.Log
-import com.kayanne.retrocrate.data.source.LibretroThumbnails
 import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.domain.model.Platform
 import com.kayanne.retrocrate.domain.model.Source
@@ -103,23 +102,26 @@ object OpenVgdbSource {
             .map { (_, regional) -> mergeRegionalRows(regional) }
             .sortedBy { it.title.lowercase() }
 
-        val hits = merged.count { it.description != null || it.genres.isNotEmpty() }
-        Log.i(TAG, "OpenVGDB $platform: ${merged.size} titles, $hits with description or genre")
+        // Only surface real, catalogued games: require OpenVGDB's curated cover art (its presence
+        // is a strong "this is a real release" signal) and reject obvious non-game / junk entries.
+        // The old code synthesised a libretro-thumbnails URL for every title, which always 404'd for
+        // these junk entries and let fake/homebrew rows with no real art onto the carousel.
+        val real = merged.filter { it.coverUrl != null && isRealTitle(it.title) }
+        Log.i(TAG, "OpenVGDB $platform: ${merged.size} titles, ${real.size} real (with cover art)")
 
-        merged.map { row ->
+        real.map { row ->
             Game(
                 id = "openvgdb:${platform.name.lowercase()}:${row.title.toSlug()}",
                 title = row.title,
                 platform = platform,
                 releaseYear = row.year,
+                releaseDate = row.year?.times(10000),
                 developer = row.developer,
                 publisher = row.publisher,
                 genres = row.genres,
                 description = row.description,
-                // Prefer OpenVGDB's curated cover URL (90%+ coverage), fall back to
-                // libretro-thumbnails (which often 404s for less common titles).
-                boxArtUrl = row.coverUrl ?: LibretroThumbnails.boxArtUrl(platform, row.title),
-                heroArtUrl = LibretroThumbnails.snapUrl(platform, row.title),
+                boxArtUrl = row.coverUrl,
+                heroArtUrl = row.coverUrl,
                 sources = if (row.romFileName != null) {
                     listOf(
                         Source(
@@ -127,12 +129,25 @@ object OpenVgdbSource {
                             siteName = "Internet Archive",
                             region = row.region,
                             sizeBytes = null,
-                            resolveUrl = row.romFileName, // No-Intro filename, used by IaResolver
+                            resolveUrl = row.romFileName, // No-Intro filename, used by RomMatcher
                         ),
                     )
                 } else emptyList(),
             )
         }
+    }
+
+    // Rejects No-Intro / dump tags that mark non-retail junk (hacks, prototypes, unlicensed, BIOS).
+    private val JUNK_MARKERS = Regex(
+        "\\((unl|pirate|hack|aftermarket|homebrew|beta|proto|prototype|sample|demo|test|debug)",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private fun isRealTitle(title: String): Boolean {
+        if (title.isBlank()) return false
+        if (JUNK_MARKERS.containsMatchIn(title)) return false
+        if (title.contains("BIOS", ignoreCase = true)) return false
+        return true
     }
 
     private data class RegionalRow(

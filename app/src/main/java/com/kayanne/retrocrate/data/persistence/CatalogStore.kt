@@ -23,7 +23,9 @@ object CatalogStore {
 
     // Bump on any change to how Game is built so old snapshots get re-fetched.
     // v1 = Vimm's-shaped catalog (no genres). v2 = OpenVGDB-shaped (genres, descriptions, etc.).
-    private const val CURRENT_VERSION = 2
+    // v3 = real-art only (verified cover required; junk/fake titles filtered out).
+    // v4 = adds Game.releaseDate (YYYYMMDD) for accurate newest-first sorting.
+    private const val CURRENT_VERSION = 4
     private lateinit var dataStore: DataStore<Preferences>
 
     private val json = Json {

@@ -2,10 +2,12 @@ package com.kayanne.retrocrate.feature.search
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kayanne.retrocrate.data.persistence.RecentSearchesStore
 import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.domain.model.Platform
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.stateIn
 
 private const val DEBOUNCE_MS = 300L
+private const val SAVE_DEBOUNCE_MS = 900L
 private const val MAX_RESULTS = 120
 private const val MAX_GENRE_CHIPS = 24
 
@@ -28,6 +31,8 @@ class SearchViewModel : ViewModel() {
 
     private val _selectedGenre = MutableStateFlow<String?>(null)
     private val _selectedPlatform = MutableStateFlow<Platform?>(null)
+
+    val recentSearches: StateFlow<List<String>> = RecentSearchesStore.recent
 
     val uiState: StateFlow<SearchUiState> = combine(
         _query.debounce(DEBOUNCE_MS),
@@ -77,8 +82,23 @@ class SearchViewModel : ViewModel() {
         initialValue = SearchUiState(),
     )
 
+    init {
+        // Remember searches as the user types. A longer debounce than the live search means we only
+        // save a query once they've paused on it; RecentSearchesStore collapses half-typed prefixes
+        // ("mar" → "mario") so the list stays tidy.
+        viewModelScope.launch {
+            _query.debounce(SAVE_DEBOUNCE_MS).collect { q ->
+                if (q.trim().length >= 2) RecentSearchesStore.add(q)
+            }
+        }
+    }
+
     fun onQueryChange(query: String) {
         _query.value = query
+    }
+
+    fun onResultOpened() {
+        viewModelScope.launch { RecentSearchesStore.add(_query.value) }
     }
 
     fun onGenreToggle(genre: String) {

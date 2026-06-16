@@ -37,6 +37,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.kayanne.retrocrate.core.designsystem.Spacing
+import com.kayanne.retrocrate.feature.browse.BrowseScreen
 import com.kayanne.retrocrate.feature.detail.GameDetailScreen
 import com.kayanne.retrocrate.feature.downloads.DownloadsScreen
 import com.kayanne.retrocrate.feature.home.HomeScreen
@@ -76,6 +77,13 @@ fun RetroCrateApp() {
             composable<HomeRoute> {
                 HomeScreen(
                     contentPadding = padding,
+                    onOpenGame = { gameId -> navController.navigate(GameDetailRoute(gameId)) },
+                    onOpenBrowse = { kind, value -> navController.navigate(BrowseRoute(kind, value)) },
+                )
+            }
+            composable<BrowseRoute> {
+                BrowseScreen(
+                    onBack = { navController.popBackStack() },
                     onOpenGame = { gameId -> navController.navigate(GameDetailRoute(gameId)) },
                 )
             }

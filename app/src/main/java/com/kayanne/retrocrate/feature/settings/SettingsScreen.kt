@@ -172,7 +172,7 @@ private fun AboutCard() {
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                text = "Catalog: OpenVGDB (bundled). Downloads: Internet Archive.",
+                text = "Catalog: OpenVGDB + bundled Switch list. Downloads: Internet Archive, then Vimm's Lair.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),

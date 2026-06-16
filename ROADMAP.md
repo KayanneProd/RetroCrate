@@ -282,9 +282,9 @@ That's the working-app milestone. Demoable, useful, the user's actual workflow.
 
 | # | Question | Blocks | Recommendation |
 |---|---|---|---|
-| 1 | **Which ROM source for v1?** | Branch 3 | Myrient — clean HTML, no JS, well-organized, scrape-tolerant. |
+| 1 | ~~**Which ROM source for v1?**~~ **RESOLVED 2026-06-14** | Branch 3 | **Internet Archive (primary, strict file-matching) + Vimm's Lair (time-boxed secondary), behind a `RomSource` chain.** Myrient was the original pick but **shut down (March 2026)** — do not use it. |
 | 2 | **Which platform to scrape first?** | Branch 3 | GBA — small ROMs (5–30MB), huge library, lots of games the user owns. |
-| 3 | **Storage location default — app-specific dir, or SAF tree picker?** | Branch 5 | App-specific external dir for v1 (zero permission UX, simplest). Add SAF picker in Branch 7 settings. Caveat: app uninstall wipes the files. |
+| 3 | ~~**Storage location default — app-specific dir, or SAF tree picker?**~~ **RESOLVED** | Branch 5 | **Per-platform user-chosen SAF trees** — each platform (incl. Switch) routes to its own folder via `SettingsStore`; picker launches from Settings or on first Install for a platform. |
 | 4 | **Emulator handoff — Intent.ACTION_VIEW (system picker) or hardcode known emulators?** | Branch 6 | ACTION_VIEW + content URI via FileProvider for v1. Hardcoded deep links is a post-v1 polish. |
 | 5 | **What metadata index to enrich Myrient's bare directory listings (box art, descriptions, screenshots)?** | Branch 3 | libretro-thumbnails repo on GitHub (predictable URL pattern per ROM filename, no API needed). Descriptions can come from a small bundled JSON of "popular titles" or be left blank for v1. |
 | 6 | **Discovery rails — what signals do we have from Myrient (recent additions, sizes, etc.) vs. what do we hand-curate?** | Branch 3 | Mix: "Recently Added" from Myrient directory mtimes; "Browse by Platform" from filesystem; "Featured" from a small bundled local JSON the user can edit (decision log curation, Steam-staff-pick vibe). |

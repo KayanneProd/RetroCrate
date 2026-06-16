@@ -1,0 +1,240 @@
+package com.kayanne.retrocrate.data.source.ia
+
+import android.util.Log
+import com.kayanne.retrocrate.data.network.HttpClient
+import com.kayanne.retrocrate.data.source.ResolveQuery
+import com.kayanne.retrocrate.data.source.ResolvedDownload
+import com.kayanne.retrocrate.data.source.RomMatcher
+import com.kayanne.retrocrate.data.source.RomSource
+import com.kayanne.retrocrate.domain.model.Platform
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Request
+
+// Resolves a game to a downloadable ROM on Internet Archive. Public, no auth.
+//
+// Two complementary strategies, both gated on confidence so we never hand back a random file:
+//  1. File match — score every file in an item against the requested game (exact No-Intro name or
+//     normalized-title match). This nails multi-ROM "full set" items, returning the one right file.
+//  2. Item-title trust — when an item's *title* clearly matches the game, take its largest real
+//     payload even if the file is an archive (.tar.gz, .zip, .xci, .nsp). This is how big Switch /
+//     disc dumps live on IA, packaged as one archive per item. Junk items (amiibo prints, mods,
+//     wikis) fail the title match, so they're still rejected.
+object InternetArchiveSource : RomSource {
+
+    private const val TAG = "IaSource"
+    override val siteName: String = "Internet Archive"
+
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+
+    // Archive wrappers a whole-game dump is commonly packaged as on IA, beyond bare ROM extensions.
+    private val ARCHIVE_EXTENSIONS = setOf("tar", "gz", "tgz", "bz2", "xz", "zip", "7z", "rar")
+
+    override suspend fun resolve(query: ResolveQuery): ResolvedDownload? = withContext(Dispatchers.IO) {
+        // Switch dumps on IA are catalogued by Title ID, not the game name — try that first.
+        query.titleId?.takeIf { it.isNotBlank() }?.let { tid ->
+            resolveByTitleId(tid)?.let { return@withContext it }
+        }
+
+        val docs = search(query).filterNot { isJunkItem(it) }
+        if (docs.isEmpty()) {
+            Log.w(TAG, "No IA search results for \"${query.title}\"")
+            return@withContext null
+        }
+        for (doc in docs.take(12)) {
+            val files = metadataFiles(doc.identifier)
+            if (files.isEmpty()) continue
+
+            // Strategy 1: an exact / strongly-scored file inside the item.
+            RomMatcher.bestMatch(
+                title = query.title,
+                romFileName = query.romFileName,
+                preferredRegion = query.preferredRegion,
+                candidates = files.map { RomMatcher.Candidate(it.name, it.size?.toLongOrNull()) },
+            )?.let { return@withContext download(doc.identifier, it.filename, it.sizeBytes) }
+
+            // Strategy 2: the item itself is clearly this game — take its main payload.
+            if (doc.title != null && RomMatcher.titlesMatch(doc.title, query.title)) {
+                pickPayload(files, query.platform)?.let {
+                    return@withContext download(doc.identifier, it.name, it.size?.toLongOrNull())
+                }
+            }
+        }
+        Log.w(TAG, "No IA item confidently matched \"${query.title}\"")
+        null
+    }
+
+    private fun download(identifier: String, filename: String, size: Long?): ResolvedDownload {
+        val url = "https://archive.org/download/$identifier/${urlEncodePath(filename)}"
+        Log.i(TAG, "Resolved -> $url")
+        return ResolvedDownload(siteName = siteName, filename = filename, downloadUrl = url, sizeBytes = size)
+    }
+
+    // Largest genuine payload in an item, ignoring IA's derived sidecar files (_meta.xml, torrents,
+    // checksums, etc.). Accepts ROM extensions and archive wrappers — EXCEPT for Switch, where we
+    // require a direct .nsp/.xci/.nsz/.xcz: IA's Switch "dumps" are routinely unpacked CDN folders
+    // (.app files) or Wii U versions inside a multi-GB archive with no usable ROM, and streaming all
+    // of it only to find nothing is far worse than honestly reporting "no source found".
+    private fun pickPayload(files: List<IaFile>, platform: Platform): IaFile? {
+        val allowArchives = platform != Platform.SWITCH
+        return files.asSequence()
+            .filter { !isSidecar(it.name) }
+            .filter { RomMatcher.hasRomExtension(it.name) || (allowArchives && extensionOf(it.name) in ARCHIVE_EXTENSIONS) }
+            // Prefer an English/USA copy, then fall back to the largest payload.
+            .sortedWith(
+                compareBy<IaFile> { RomMatcher.regionRank(it.name) }
+                    .thenByDescending { it.size?.toLongOrNull() ?: 0L },
+            )
+            .firstOrNull()
+    }
+
+    private fun isSidecar(name: String): Boolean {
+        val lower = name.lowercase()
+        if (lower.endsWith("_meta.xml") || lower.endsWith("_files.xml") ||
+            lower.endsWith("_meta.sqlite") || lower.endsWith("_reviews.xml") ||
+            lower.endsWith("_archive.torrent")
+        ) return true
+        return extensionOf(name) in setOf("md5", "sha1", "xml", "sqlite", "torrent")
+    }
+
+    // Internet Archive search for a game title is full of non-game items that merely mention it:
+    // Thingiverse 3D prints, Garry's Mod addons, wikis, soundtracks, amiibo/figure scans, fan mods.
+    // Drop them so item-title-trust can't grab, say, a "Breath of the Wild Logo" .stl.
+    private val JUNK_ID_PREFIXES = listOf("thingiverse-", "gmod_", "miraheze-", "wiki-")
+    private val JUNK_TITLE_WORDS = setOf(
+        "logo", "amiibo", "soundtrack", "ost", "lithophane", "papercraft", "keychain", "figure",
+        "figurine", "cosplay", "plush", "wallpaper", "ringtone", "sticker", "decal", "stencil",
+        "bookmark", "magnet", "cursor", "wiki", "tas", "speedrun", "trailer", "unboxing", "review",
+        "walkthrough", "guide", "manual", "scan", "papercraft", "diorama", "statue", "pendant",
+    )
+
+    private fun isJunkItem(doc: IaSearchDoc): Boolean {
+        if (JUNK_ID_PREFIXES.any { doc.identifier.startsWith(it, ignoreCase = true) }) return true
+        val title = doc.title?.lowercase() ?: return false
+        val words = title.split(Regex("[^a-z0-9]+")).toSet()
+        return words.any { it in JUNK_TITLE_WORDS }
+    }
+
+    // Finds the IA item whose title/identifier carries the Switch Title ID and returns its main
+    // payload (the dump, usually a .zip/.nsp). Title-ID match is unambiguous, so we trust the
+    // archive and let ArchiveExtractor pull the .nsp out of it.
+    private fun resolveByTitleId(titleId: String): ResolvedDownload? {
+        val tid = titleId.lowercase()
+        for (doc in fetchDocs(titleId).take(8)) {
+            if (tid !in alnum(doc.identifier) && tid !in alnum(doc.title ?: "")) continue
+            val files = metadataFiles(doc.identifier)
+            val file = pickTitleIdPayload(files, tid) ?: continue
+            val url = "https://archive.org/download/${doc.identifier}/${urlEncodePath(file.name)}"
+            Log.i(TAG, "Resolved Title ID $titleId -> $url")
+            return ResolvedDownload(siteName, file.name, url, file.size?.toLongOrNull())
+        }
+        return null
+    }
+
+    // Largest payload that carries the Title ID (so we get the right game, not a DLC/other title in
+    // a shared item), falling back to the largest payload overall.
+    private fun pickTitleIdPayload(files: List<IaFile>, tid: String): IaFile? {
+        val candidates = files.filter {
+            !isSidecar(it.name) &&
+                (RomMatcher.hasRomExtension(it.name) || extensionOf(it.name) in ARCHIVE_EXTENSIONS)
+        }
+        val withTid = candidates.filter { tid in alnum(it.name) }
+        return withTid.ifEmpty { candidates }.maxByOrNull { it.size?.toLongOrNull() ?: 0L }
+    }
+
+    private fun alnum(s: String): String = s.lowercase().filter { it.isLetterOrDigit() }
+
+    private fun search(query: ResolveQuery): List<IaSearchDoc> {
+        val titleClause = "title:(${quote(query.title)})"
+        val fileClause = query.romFileName?.let { "title:(${quote(baseName(it))})" }
+        val q = buildString {
+            append("mediatype:(software OR data) AND (")
+            append(titleClause)
+            if (fileClause != null && fileClause != titleClause) append(" OR ").append(fileClause)
+            append(")")
+        }
+        return fetchDocs(q)
+    }
+
+    private fun fetchDocs(q: String): List<IaSearchDoc> {
+        val url = "https://archive.org/advancedsearch.php".toHttpUrl().newBuilder()
+            .addQueryParameter("q", q)
+            .addQueryParameter("fl[]", "identifier")
+            .addQueryParameter("fl[]", "title")
+            .addQueryParameter("rows", "25")
+            .addQueryParameter("output", "json")
+            .build()
+        val request = Request.Builder().url(url).header("Accept", "application/json").build()
+        return runCatching {
+            HttpClient.get().newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@runCatching emptyList()
+                val body = response.body?.string() ?: return@runCatching emptyList()
+                val docs = json.parseToJsonElement(body)
+                    .jsonObject["response"]?.jsonObject?.get("docs")?.jsonArray
+                    ?: return@runCatching emptyList()
+                docs.mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val id = obj["identifier"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    val title = when (val t = obj["title"]) {
+                        is JsonPrimitive -> t.contentOrNull
+                        is JsonArray -> t.firstOrNull()?.jsonPrimitive?.contentOrNull
+                        else -> null
+                    }
+                    IaSearchDoc(id, title)
+                }
+            }
+        }.getOrElse {
+            Log.w(TAG, "IA search failed for query \"$q\"", it)
+            emptyList()
+        }
+    }
+
+    private fun metadataFiles(identifier: String): List<IaFile> {
+        val request = Request.Builder()
+            .url("https://archive.org/metadata/$identifier")
+            .header("Accept", "application/json")
+            .build()
+        return runCatching {
+            HttpClient.get().newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@runCatching emptyList()
+                val body = response.body?.string() ?: return@runCatching emptyList()
+                json.decodeFromString<IaMetadata>(body).files
+            }
+        }.getOrElse {
+            Log.w(TAG, "IA metadata fetch failed for $identifier", it)
+            emptyList()
+        }
+    }
+
+    private fun extensionOf(name: String): String =
+        name.substringAfterLast('.', "").lowercase().trim()
+
+    private fun quote(s: String): String = "\"${s.replace("\"", "")}\""
+
+    private fun baseName(romFileName: String): String =
+        romFileName.substringBeforeLast('.').replace(Regex("\\s*[\\(\\[][^\\)\\]]*[\\)\\]]"), "").trim()
+
+    private fun urlEncodePath(s: String): String =
+        java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+}
+
+private data class IaSearchDoc(val identifier: String, val title: String? = null)
+
+@Serializable
+private data class IaMetadata(val files: List<IaFile> = emptyList())
+
+@Serializable
+private data class IaFile(
+    val name: String,
+    val size: String? = null,
+    val format: String? = null,
+)

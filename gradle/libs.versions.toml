@@ -25,6 +25,9 @@ kotlinxSerializationJson = "1.9.0"
 # Scraping
 jsoup = "1.21.2"
 
+# Archive extraction (tar / gzip / zip ROM unpacking)
+commonsCompress = "1.27.1"
+
 # Imaging
 coil = "3.4.0"
 
@@ -71,6 +74,9 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 
 # Scraping
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
+
+# Archive extraction
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 
 # Imaging
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }

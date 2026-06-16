@@ -5,8 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kayanne.retrocrate.data.persistence.DownloadHistoryStore
 import com.kayanne.retrocrate.data.persistence.SettingsStore
-import com.kayanne.retrocrate.data.source.openvgdb.OpenVgdbSource
+import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.domain.model.Platform
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,7 +20,7 @@ class SettingsViewModel : ViewModel() {
     val uiState: StateFlow<SettingsUiState> = SettingsStore.platformFolders
         .map { folders ->
             SettingsUiState(
-                rows = OpenVgdbSource.SUPPORTED_PLATFORMS.map { platform ->
+                rows = GameCatalogRepository.browsablePlatforms.map { platform ->
                     PlatformFolderRow(platform = platform, uri = folders[platform])
                 },
             )
@@ -27,9 +28,14 @@ class SettingsViewModel : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun onFolderPicked(context: Context, platform: Platform, uri: Uri) {
+        val appContext = context.applicationContext
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         context.contentResolver.takePersistableUriPermission(uri, flags)
-        viewModelScope.launch { SettingsStore.setPlatformFolder(platform, uri.toString()) }
+        viewModelScope.launch {
+            SettingsStore.setPlatformFolder(platform, uri.toString())
+            // Pull any download history this folder already holds (restores it after a reinstall).
+            DownloadHistoryStore.mergeFolder(appContext, uri)
+        }
     }
 
     fun onClearPlatformFolder(platform: Platform) {

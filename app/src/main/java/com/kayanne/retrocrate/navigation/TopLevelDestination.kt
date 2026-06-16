@@ -36,3 +36,7 @@ data object DownloadsRoute
 
 @Serializable
 data class GameDetailRoute(val gameId: String)
+
+// kind = "genre" | "platform"; value = the genre name or Platform.name.
+@Serializable
+data class BrowseRoute(val kind: String, val value: String)

@@ -27,7 +27,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -36,6 +36,9 @@ android {
 
     buildTypes {
         release {
+            // Personal app, never on the Play Store. Sign release with the debug key so it installs
+            // as an in-place update over the debug builds already on the device (same signature).
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -89,6 +92,9 @@ dependencies {
 
     // Scraping
     implementation(libs.jsoup)
+
+    // Archive extraction (unpack ROMs from .tar.gz / .zip downloads)
+    implementation(libs.commons.compress)
 
     // Imaging
     implementation(libs.coil.compose)

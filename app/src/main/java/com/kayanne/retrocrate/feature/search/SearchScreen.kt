@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -21,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -44,6 +47,11 @@ fun SearchScreen(
 ) {
     val query by viewModel.query.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
+    val openGame: (String) -> Unit = { id ->
+        viewModel.onResultOpened()
+        onOpenGame(id)
+    }
 
     Column(
         modifier = Modifier
@@ -77,7 +85,9 @@ fun SearchScreen(
         }
         Box(modifier = Modifier.fillMaxSize()) {
             when {
-                !uiState.hasFilter -> SearchPlaceholder(
+                !uiState.hasFilter -> SearchStartContent(
+                    recentSearches = recentSearches,
+                    onRecentClick = viewModel::onQueryChange,
                     catalogSize = uiState.catalogSize,
                     platformCount = uiState.availablePlatforms.size,
                     enrichedGenreCount = uiState.availableGenres.size,
@@ -90,7 +100,7 @@ fun SearchScreen(
                 )
                 else -> ResultsGrid(
                     games = uiState.results,
-                    onOpenGame = onOpenGame,
+                    onOpenGame = openGame,
                 )
             }
         }
@@ -206,6 +216,55 @@ private fun ResultsGrid(
             GameCapsule(
                 game = game,
                 onClick = { onOpenGame(game.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchStartContent(
+    recentSearches: List<String>,
+    onRecentClick: (String) -> Unit,
+    catalogSize: Int,
+    platformCount: Int,
+    enrichedGenreCount: Int,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (recentSearches.isNotEmpty()) {
+            Row(
+                modifier = Modifier.padding(start = Spacing.l, top = Spacing.s, bottom = Spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = Spacing.xs),
+                )
+                Text(
+                    text = "Recent searches",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = Spacing.l),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            ) {
+                items(recentSearches, key = { it }) { recent ->
+                    SuggestionChip(
+                        onClick = { onRecentClick(recent) },
+                        label = { Text(recent) },
+                    )
+                }
+            }
+        }
+        Box(modifier = Modifier.fillMaxSize()) {
+            SearchPlaceholder(
+                catalogSize = catalogSize,
+                platformCount = platformCount,
+                enrichedGenreCount = enrichedGenreCount,
             )
         }
     }

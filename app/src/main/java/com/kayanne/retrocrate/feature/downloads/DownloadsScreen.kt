@@ -28,10 +28,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.designsystem.Spacing
+import com.kayanne.retrocrate.data.persistence.DownloadHistoryStore
 import com.kayanne.retrocrate.domain.model.DownloadState
+import com.kayanne.retrocrate.domain.model.Platform
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,7 +67,7 @@ fun DownloadsScreen(
                 .padding(padding)
                 .padding(Spacing.l),
         ) {
-            if (uiState.items.isEmpty()) {
+            if (uiState.active.isEmpty() && uiState.history.isEmpty()) {
                 Text(
                     text = "No downloads yet.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -73,14 +79,79 @@ fun DownloadsScreen(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.s),
                 ) {
-                    items(uiState.items, key = { it.game.id }) { row ->
-                        DownloadRowCard(row)
+                    if (uiState.active.isNotEmpty()) {
+                        item("active-label") { SectionLabel("Active") }
+                        items(uiState.active, key = { "active:${it.game.id}" }) { row ->
+                            DownloadRowCard(row)
+                        }
+                    }
+                    if (uiState.history.isNotEmpty()) {
+                        item("history-label") { SectionLabel("History") }
+                        items(uiState.history, key = { "history:${it.gameId}" }) { entry ->
+                            HistoryRowCard(entry)
+                        }
                     }
                 }
             }
         }
     }
 }
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = Spacing.xs, bottom = Spacing.xs),
+    )
+}
+
+@Composable
+private fun HistoryRowCard(entry: DownloadHistoryStore.Entry) {
+    val platformName = runCatching { Platform.valueOf(entry.platform).displayName }.getOrDefault(entry.platform)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(modifier = Modifier.padding(Spacing.m)) {
+            Text(
+                text = entry.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = platformName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(Spacing.xs))
+            Text(
+                text = entry.filename,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val meta = buildString {
+                entry.sizeBytes?.let { append(formatBytes(it)) }
+                if (entry.sizeBytes != null) append("  ·  ")
+                append(DATE_FORMAT.format(Date(entry.completedAt)))
+            }
+            Text(
+                text = meta,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+        }
+    }
+}
+
+private val DATE_FORMAT = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
 
 @Composable
 private fun DownloadRowCard(row: DownloadRow) {
@@ -102,6 +173,23 @@ private fun DownloadRowCard(row: DownloadRow) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            row.info?.let { info ->
+                Spacer(Modifier.height(Spacing.xs))
+                Text(
+                    text = info.filename,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                info.totalBytes?.let { bytes ->
+                    Text(
+                        text = formatBytes(bytes),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
             Spacer(Modifier.height(Spacing.xs))
             StateLine(state = row.state)
         }
@@ -151,4 +239,13 @@ private fun StateLine(state: DownloadState) {
             )
         }
     }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return "%.0f KB".format(kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return "%.1f MB".format(mb)
+    return "%.2f GB".format(mb / 1024.0)
 }
