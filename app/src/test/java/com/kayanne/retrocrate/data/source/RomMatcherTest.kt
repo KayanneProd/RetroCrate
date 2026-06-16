@@ -135,6 +135,33 @@ class RomMatcherTest {
     }
 
     @Test
+    fun `rejects an oversized archive that cannot be the platform's cartridge`() {
+        // The reported bug: an N64 request matched a ~460 MB PlayStation "A Bug's Life (Spain).zip"
+        // via the archive fallback (extension can't prove platform). A zip that large can't hold an
+        // N64 cartridge ROM (max ~64 MB), so it must be rejected — letting Vimm's serve the N64 copy.
+        val match = RomMatcher.bestMatch(
+            title = "A Bug's Life",
+            platform = Platform.N64,
+            romFileName = null,
+            preferredRegion = "USA",
+            candidates = listOf(Candidate("A Bug's life (Spain).zip", 460_062_975L)),
+        )
+        assertNull(match)
+    }
+
+    @Test
+    fun `accepts a plausibly-sized archive for the platform`() {
+        val match = RomMatcher.bestMatch(
+            title = "A Bug's Life",
+            platform = Platform.N64,
+            romFileName = null,
+            preferredRegion = "USA",
+            candidates = listOf(Candidate("A Bug's Life (USA).z64.zip", 11_000_000L)),
+        )
+        assertEquals("A Bug's Life (USA).z64.zip", match?.filename)
+    }
+
+    @Test
     fun `normalizeTitle handles articles and ampersands`() {
         assertEquals(
             RomMatcher.normalizeTitle("Legend of Zelda, The"),

@@ -13,17 +13,21 @@ import kotlinx.coroutines.withTimeoutOrNull
 // throws, times out, or simply has nothing is skipped — so adding a flaky source can only help,
 // never break the working path.
 //
-// Order: Internet Archive first (always up, broad coverage, now strict-matching). Vimm's Lair
-// second — its No-Intro-catalogued, one-game-per-page vault matches exactly, but it gates downloads
-// behind a browser session, so it's time-boxed and only consulted when IA comes up empty.
+// Order: Vimm's Lair first. Its vault is platform-scoped and No-Intro/Redump-catalogued, one game
+// per page, so it structurally can't return the wrong platform or a grab-bag mismatch (the whole
+// class of bugs that plague IA's cross-platform search). It's time-boxed so a slow/hung resolve
+// can't stall the chain, and it self-skips platforms it doesn't vault (Switch, Wii U, 3DS, Vita) by
+// returning null instantly — so those fall straight to IA with no added latency. Internet Archive
+// second: the fallback for whatever Vimm's doesn't have (incl. Switch), kept honest by the
+// platform/size/junk guards in InternetArchiveSource + RomMatcher.
 object DownloadSourceResolver {
 
     private const val TAG = "DownloadResolver"
-    private const val SLOW_SOURCE_TIMEOUT_MS = 12_000L
+    private const val VIMMS_RESOLVE_TIMEOUT_MS = 12_000L
 
     private val sources: List<Pair<RomSource, Long?>> = listOf(
+        VimmsDownloadSource to VIMMS_RESOLVE_TIMEOUT_MS,
         InternetArchiveSource to null,
-        VimmsDownloadSource to SLOW_SOURCE_TIMEOUT_MS,
     )
 
     suspend fun resolve(game: Game): ResolvedDownload? {

@@ -104,7 +104,10 @@ object InternetArchiveSource : RomSource {
         val pool = when {
             native.isNotEmpty() -> native
             platform == Platform.SWITCH -> emptyList()
-            else -> real.filter { extensionOf(it.name) in ARCHIVE_EXTENSIONS }
+            else -> real.filter {
+                extensionOf(it.name) in ARCHIVE_EXTENSIONS &&
+                    RomMatcher.isPlausibleSize(it.size?.toLongOrNull(), platform)
+            }
         }
         return pool
             // Prefer an English/USA copy, then fall back to the largest payload.

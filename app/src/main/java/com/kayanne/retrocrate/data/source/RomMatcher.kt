@@ -60,6 +60,34 @@ object RomMatcher {
         Platform.PS_VITA -> setOf("vpk")
     }
 
+    // A compressed archive is never larger than the ROM inside it, so if an opaque `.zip`/`.7z`/`.rar`
+    // already exceeds a cartridge platform's largest possible ROM, it cannot be that platform's game —
+    // it's a different console's version of the same title (an N64 request matching a ~460 MB
+    // PlayStation "A Bug's Life" disc). Caps are generous (well above the largest real cartridge) and
+    // only gate the archive fallback, where extension can't prove platform. Disc-based and large-cart
+    // platforms have no useful upper bound → no gate (null); unknown sizes are allowed through.
+    private fun maxCartridgeBytes(platform: Platform): Long? {
+        val mb = 1024L * 1024L
+        return when (platform) {
+            Platform.NES -> 8 * mb
+            Platform.SNES -> 16 * mb
+            Platform.N64 -> 128 * mb
+            Platform.GAME_BOY -> 8 * mb
+            Platform.GAME_BOY_COLOR -> 16 * mb
+            Platform.GAME_BOY_ADVANCE -> 64 * mb
+            Platform.GENESIS -> 16 * mb
+            Platform.NINTENDO_DS -> 1024 * mb
+            Platform.NINTENDO_3DS, Platform.GAMECUBE, Platform.WII, Platform.WII_U,
+            Platform.SWITCH, Platform.SATURN, Platform.DREAMCAST,
+            Platform.PS1, Platform.PS2, Platform.PSP, Platform.PS_VITA -> null
+        }
+    }
+
+    fun isPlausibleSize(sizeBytes: Long?, platform: Platform): Boolean {
+        val cap = maxCartridgeBytes(platform) ?: return true
+        return sizeBytes == null || sizeBytes <= cap
+    }
+
     fun hasRomExtension(filename: String): Boolean =
         extensionOf(filename) in ROM_EXTENSIONS
 
@@ -91,7 +119,9 @@ object RomMatcher {
     ): Candidate? {
         val platformExts = extensionsFor(platform)
         val native = candidates.filter { extensionOf(it.filename) in platformExts }
-        val archives = candidates.filter { extensionOf(it.filename) in ARCHIVE_WRAPPERS }
+        val archives = candidates.filter {
+            extensionOf(it.filename) in ARCHIVE_WRAPPERS && isPlausibleSize(it.sizeBytes, platform)
+        }
         return matchWithin(native, title, romFileName, preferredRegion)
             ?: matchWithin(archives, title, romFileName, preferredRegion)
     }
