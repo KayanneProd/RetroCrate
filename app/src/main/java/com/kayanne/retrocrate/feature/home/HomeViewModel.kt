@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.data.repository.LoadStatus
 import com.kayanne.retrocrate.domain.model.Game
+import com.kayanne.retrocrate.domain.model.GameCollection
 import com.kayanne.retrocrate.domain.model.Platform
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private const val GENRE_CARD_COUNT = 8
+private const val COLLECTION_RAIL_COUNT = 20
 
 class HomeViewModel : ViewModel() {
 
@@ -36,7 +38,8 @@ class HomeViewModel : ViewModel() {
         repository.status,
         rails,
         browse,
-    ) { status, rails, (genres, platforms) ->
+        repository.observeCollections(),
+    ) { status, rails, (genres, platforms), collections ->
         HomeUiState(
             status = status,
             featured = rails.featured,
@@ -45,6 +48,7 @@ class HomeViewModel : ViewModel() {
             discover = rails.discover,
             genres = genres,
             platforms = platforms,
+            collections = collections.take(COLLECTION_RAIL_COUNT),
         )
     }.stateIn(
         scope = viewModelScope,
@@ -57,6 +61,7 @@ class HomeViewModel : ViewModel() {
     }
 
     fun refresh() {
+        repository.reshuffleFeatured()
         viewModelScope.launch {
             repository.ensureLoaded()
         }
@@ -78,4 +83,5 @@ data class HomeUiState(
     val discover: List<Game> = emptyList(),
     val genres: List<String> = emptyList(),
     val platforms: List<Platform> = emptyList(),
+    val collections: List<GameCollection> = emptyList(),
 )

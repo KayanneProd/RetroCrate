@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,9 +21,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +40,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.designsystem.Spacing
+import com.kayanne.retrocrate.data.persistence.DebridProvider
+import com.kayanne.retrocrate.data.persistence.DebridSettings
 import com.kayanne.retrocrate.domain.model.Platform
 
 @Composable
@@ -45,6 +50,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val debrid by viewModel.debrid.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Shared SAF launcher; tracks which platform we're picking for so the callback can route.
@@ -87,6 +93,18 @@ fun SettingsScreen(
                     },
                     onClear = { viewModel.onClearPlatformFolder(row.platform) },
                 )
+            }
+            item("debrid") {
+                Spacer(Modifier.height(Spacing.l))
+                SectionLabel("Debrid (optional)")
+                Text(
+                    text = "Add a Premiumize or Real-Debrid key to download Switch and other hard-to-find games. " +
+                        "When set, RetroCrate finds torrents for a game and unlocks the best cached one automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = Spacing.s),
+                )
+                DebridCard(settings = debrid, onSave = viewModel::onSetDebridKey)
             }
             item("about") {
                 Spacer(Modifier.height(Spacing.l))
@@ -159,6 +177,86 @@ private fun PlatformFolderCard(
 }
 
 @Composable
+private fun DebridCard(
+    settings: DebridSettings,
+    onSave: (DebridProvider, String) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(modifier = Modifier.padding(Spacing.m)) {
+            DebridKeyField(
+                label = "Premiumize API key",
+                current = settings.premiumizeApiKey,
+                onSave = { onSave(DebridProvider.PREMIUMIZE, it) },
+            )
+            Spacer(Modifier.height(Spacing.m))
+            DebridKeyField(
+                label = "Real-Debrid API key",
+                current = settings.realDebridApiKey,
+                onSave = { onSave(DebridProvider.REAL_DEBRID, it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DebridKeyField(
+    label: String,
+    current: String?,
+    onSave: (String) -> Unit,
+) {
+    var text by remember(current) { mutableStateOf(current.orEmpty()) }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (!current.isNullOrBlank()) {
+                Text(
+                    text = "Connected",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Spacer(Modifier.height(Spacing.xs))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                placeholder = { Text("Paste key") },
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(Spacing.s))
+            Button(
+                onClick = { onSave(text) },
+                enabled = text != current.orEmpty(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            ) {
+                Text("Save")
+            }
+        }
+    }
+}
+
+@Composable
 private fun AboutCard() {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -172,7 +270,7 @@ private fun AboutCard() {
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                text = "Catalog: OpenVGDB + bundled Switch list. Downloads: Internet Archive, then Vimm's Lair.",
+                text = "Catalog: OpenVGDB + live Switch list (titledb). Downloads: Vimm's Lair, debrid (if set), then Internet Archive.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),

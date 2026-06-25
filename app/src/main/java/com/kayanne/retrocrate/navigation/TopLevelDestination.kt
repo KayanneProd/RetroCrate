@@ -35,8 +35,12 @@ data object SettingsRoute
 data object DownloadsRoute
 
 @Serializable
+data object CollectionsRoute
+
+@Serializable
 data class GameDetailRoute(val gameId: String)
 
-// kind = "genre" | "platform"; value = the genre name or Platform.name.
+// kind = "genre" | "platform" | "collection" | "new"; value = the genre name, Platform.name,
+// franchise keyword, or the rail title.
 @Serializable
 data class BrowseRoute(val kind: String, val value: String)

@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kayanne.retrocrate.data.persistence.DebridProvider
+import com.kayanne.retrocrate.data.persistence.DebridSettings
 import com.kayanne.retrocrate.data.persistence.DownloadHistoryStore
 import com.kayanne.retrocrate.data.persistence.SettingsStore
 import com.kayanne.retrocrate.data.repository.GameCatalogRepository
@@ -26,6 +28,12 @@ class SettingsViewModel : ViewModel() {
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
+
+    val debrid: StateFlow<DebridSettings> = SettingsStore.debrid
+
+    fun onSetDebridKey(provider: DebridProvider, key: String) {
+        viewModelScope.launch { SettingsStore.setDebridKey(provider, key) }
+    }
 
     fun onFolderPicked(context: Context, platform: Platform, uri: Uri) {
         val appContext = context.applicationContext

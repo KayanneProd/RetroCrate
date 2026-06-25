@@ -22,24 +22,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.designsystem.Spacing
 import com.kayanne.retrocrate.core.ui.CategoryCard
 import com.kayanne.retrocrate.core.ui.CategoryVisuals
+import com.kayanne.retrocrate.core.ui.CollectionCard
 import com.kayanne.retrocrate.core.ui.GameRail
 import com.kayanne.retrocrate.core.ui.HeroCarousel
 import com.kayanne.retrocrate.core.ui.SectionHeader
 import com.kayanne.retrocrate.data.repository.LoadStatus
+import com.kayanne.retrocrate.domain.model.GameCollection
 
 @Composable
 fun HomeScreen(
     contentPadding: PaddingValues,
     onOpenGame: (String) -> Unit,
     onOpenBrowse: (kind: String, value: String) -> Unit,
+    onOpenCollections: () -> Unit,
     viewModel: HomeViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Reshuffle the hero each time Home becomes visible (cold start, app foreground, or returning
+    // from a game) so "new + popular" is a fresh set every visit rather than the same games.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
 
     Box(
         modifier = Modifier
@@ -56,6 +65,7 @@ fun HomeScreen(
                 uiState = uiState,
                 onOpenGame = onOpenGame,
                 onOpenBrowse = onOpenBrowse,
+                onOpenCollections = onOpenCollections,
             )
         }
     }
@@ -107,6 +117,7 @@ private fun CatalogContent(
     uiState: HomeUiState,
     onOpenGame: (String) -> Unit,
     onOpenBrowse: (kind: String, value: String) -> Unit,
+    onOpenCollections: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -131,6 +142,15 @@ private fun CatalogContent(
                             onClick = { onOpenBrowse("platform", platform.name) },
                         )
                     },
+                )
+            }
+        }
+        if (uiState.collections.isNotEmpty()) {
+            item("collections") {
+                CollectionRail(
+                    collections = uiState.collections,
+                    onOpenCollection = { onOpenBrowse("collection", it) },
+                    onSeeAll = onOpenCollections,
                 )
             }
         }
@@ -178,6 +198,28 @@ private data class CategoryCardData(
     val accent: androidx.compose.ui.graphics.Color,
     val onClick: () -> Unit,
 )
+
+@Composable
+private fun CollectionRail(
+    collections: List<GameCollection>,
+    onOpenCollection: (String) -> Unit,
+    onSeeAll: () -> Unit,
+) {
+    Column {
+        SectionHeader(title = "Collections", onSeeAllClick = onSeeAll)
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = Spacing.l),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+        ) {
+            items(collections, key = { it.id }) { collection ->
+                CollectionCard(
+                    collection = collection,
+                    onClick = { onOpenCollection(collection.id) },
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun CategoryRow(title: String, cards: List<CategoryCardData>) {

@@ -28,9 +28,16 @@ object TitledbSource {
 
     private const val TAG = "Titledb"
     private const val URL = "https://raw.githubusercontent.com/blawar/titledb/master/US.en.json"
-    private const val CACHE_FILE = "titledb_switch.json"
+    // Versioned filename: bump the suffix to invalidate stale caches when the inclusion gate or the
+    // cap changes (old file is simply ignored; a fresh refresh rebuilds with the new rules).
+    // v2 = broad searchable catalog (publisher/description gate moved to New Arrivals only).
+    private const val CACHE_FILE = "titledb_switch_v2.json"
     private const val REFRESH_INTERVAL_MS = 24L * 60 * 60 * 1000
-    private const val MAX_GAMES = 800
+    // The full searchable Switch catalog — every real English retail base title, not just the recent
+    // ones. Generous cap so older games (e.g. a 2019 Layton) are present and findable. The curated
+    // "New Arrivals" rail is a strict, recent subset computed at selection time (isNewArrivalQuality),
+    // so a broad catalog here doesn't put shovelware on Home.
+    private const val MAX_CATALOG_GAMES = 8000
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -44,6 +51,15 @@ object TitledbSource {
             emptyList()
         }
     }
+
+    // The strict cut for the curated "New Arrivals" rail: a recognizable publisher and a real
+    // description, and not a re-release line / "Switch 2 Edition". Applied at selection time so the
+    // broad catalog (which includes indie/older titles for search) doesn't put shovelware on Home.
+    fun isNewArrivalQuality(game: Game): Boolean =
+        isNotablePublisher(game.publisher) &&
+            (game.description?.length ?: 0) >= 80 &&
+            !isReReleaseLine(game.title) &&
+            !isSwitch2Edition(game.title)
 
     // Returns true if the cache was refreshed (caller should reload the Switch catalog).
     suspend fun refreshIfStale(context: Context): Boolean = withContext(Dispatchers.IO) {
@@ -66,7 +82,7 @@ object TitledbSource {
             .filter { (it.releaseDate ?: 0) <= today }
             .sortedByDescending { it.releaseDate ?: 0 }
             .distinctBy { it.name.lowercase().replace(Regex("[^a-z0-9]+"), "") }
-            .take(MAX_GAMES)
+            .take(MAX_CATALOG_GAMES)
         runCatching {
             file.writeText(json.encodeToString(Cache(games = newest)))
         }.onFailure { Log.w(TAG, "Failed to write titledb cache", it) }
@@ -94,7 +110,7 @@ object TitledbSource {
         while (reader.hasNext()) {
             reader.nextName() // nsuId key (discarded)
             val entry = readEntry(reader)
-            if (entry != null && entry.isRealRecentGame()) out.add(entry)
+            if (entry != null && entry.isCatalogGame()) out.add(entry)
         }
         reader.endObject()
         Log.i(TAG, "Parsed ${out.size} candidate Switch games from titledb")
@@ -114,6 +130,7 @@ object TitledbSource {
         var releaseDate: Int? = null
         var players: Int? = null
         val genres = ArrayList<String>()
+        val screenshots = ArrayList<String>()
 
         reader.beginObject()
         while (reader.hasNext()) {
@@ -127,13 +144,14 @@ object TitledbSource {
                 "releaseDate" -> releaseDate = reader.nextStringOrNull()?.filter { it.isDigit() }?.take(8)?.toIntOrNull()
                 "numberOfPlayers" -> players = reader.nextIntOrNull()
                 "category" -> genres.addAll(reader.readStringArray())
+                "screenshots" -> screenshots.addAll(reader.readStringArray())
                 else -> reader.skipValue()
             }
         }
         reader.endObject()
 
         if (id == null || name == null) return null
-        return Entry(id, cleanName(name), icon, publisher, description, releaseDate, players, genres)
+        return Entry(id, cleanName(name), icon, publisher, description, releaseDate, players, genres, screenshots)
     }
 
     private fun JsonReader.readStringArray(): List<String> {
@@ -181,19 +199,17 @@ object TitledbSource {
         val releaseDate: Int? = null,
         val players: Int? = null,
         val genres: List<String> = emptyList(),
+        val screenshots: List<String> = emptyList(),
     ) {
-        // A real, retail-quality release worth surfacing: a base title (IDs end in 000) with art, a
-        // valid release date, a real description, a player count — and a recognizable publisher.
-        // The publisher gate is what keeps the bulk of low-effort eShop shovelware (obscure titles
-        // from one-off self-publishers) out of "New Arrivals" while letting major and notable indie
-        // labels through, so new releases that show up are ones worth seeing.
-        fun isRealRecentGame(): Boolean =
+        // A real retail Switch title worth putting in the *searchable catalog*: a base release (IDs
+        // end in 000) with eShop art, a plausible release date, an English title, and not a
+        // duplicate-y re-release line or "Switch 2 Edition". Deliberately broad — no publisher or
+        // description-length gate — so older and indie games (a 2019 Layton, a small puzzle game) are
+        // present and findable. The strict, recent "New Arrivals" cut is isNewArrivalQuality below.
+        fun isCatalogGame(): Boolean =
             id.endsWith("000", ignoreCase = true) &&
                 !icon.isNullOrBlank() &&
                 releaseDate != null && releaseDate in 20170101..20991231 &&
-                !description.isNullOrBlank() && description.length >= 80 &&
-                (players ?: 0) >= 1 &&
-                isNotablePublisher(publisher) &&
                 isEnglishTitle(name) &&
                 !isReReleaseLine(name) &&
                 !isSwitch2Edition(name)
@@ -210,6 +226,7 @@ object TitledbSource {
             description = description,
             boxArtUrl = icon,
             heroArtUrl = icon,
+            screenshots = screenshots,
             sources = listOf(
                 Source(
                     id = "switch-rom:$name",

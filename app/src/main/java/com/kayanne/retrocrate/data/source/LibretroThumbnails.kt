@@ -42,6 +42,15 @@ object LibretroThumbnails {
         return "$BASE/$repo/master/Named_Snaps/${filename.urlEncodePath()}"
     }
 
+    // Gameplay snapshot from the exact No-Intro/Redump base name (the source's romFileName minus its
+    // extension) — libretro's Named_Snaps are keyed on that name, so this hits far more reliably than
+    // guessing a region suffix. Returns null for platforms libretro doesn't cover (e.g. Switch).
+    fun snapUrlFromBase(platform: Platform, baseName: String): String? {
+        val repo = REPO_FOR[platform] ?: return null
+        val filename = "${baseName.replace(":", " -")}.png"
+        return "$BASE/$repo/master/Named_Snaps/${filename.urlEncodePath()}"
+    }
+
     private fun String.urlEncodePath(): String =
         this.replace(" ", "%20")
 }

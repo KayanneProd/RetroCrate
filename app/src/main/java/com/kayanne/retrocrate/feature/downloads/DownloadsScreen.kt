@@ -205,6 +205,20 @@ private fun StateLine(state: DownloadState) {
         is DownloadState.Queued -> {
             Text("Queued…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
+        is DownloadState.Preparing -> {
+            val pct = state.progress?.let { " ${(it * 100).toInt()}%" }.orEmpty()
+            Text("${state.message}$pct", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(Spacing.xs))
+            if (state.progress != null) {
+                LinearProgressIndicator(
+                    progress = { state.progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primary)
+            }
+        }
         is DownloadState.InProgress -> {
             val total = state.bytesTotal
             val pct = if (total != null && total > 0) ((state.bytesDone * 100) / total).toInt() else null

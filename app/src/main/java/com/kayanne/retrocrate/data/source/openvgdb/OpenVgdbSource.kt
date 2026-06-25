@@ -102,12 +102,16 @@ object OpenVgdbSource {
             .map { (_, regional) -> mergeRegionalRows(regional) }
             .sortedBy { it.title.lowercase() }
 
-        // Only surface real, catalogued games: require OpenVGDB's curated cover art (its presence
-        // is a strong "this is a real release" signal) and reject obvious non-game / junk entries.
-        // The old code synthesised a libretro-thumbnails URL for every title, which always 404'd for
-        // these junk entries and let fake/homebrew rows with no real art onto the carousel.
-        val real = merged.filter { it.coverUrl != null && isRealTitle(it.title) }
-        Log.i(TAG, "OpenVGDB $platform: ${merged.size} titles, ${real.size} real (with cover art)")
+        // Surface real, catalogued games. A curated cover is the strongest "real release" signal, but
+        // some genuine titles simply lack a cover scan in OpenVGDB — so also admit cover-less rows
+        // that carry both a real description and a genre (homebrew/junk almost never has both). These
+        // show the styled title placeholder in lists and stay off the art-only carousel, broadening
+        // search/collections coverage without reintroducing the no-art junk we filtered before.
+        val real = merged.filter {
+            isRealTitle(it.title) &&
+                (it.coverUrl != null || (it.description != null && it.genres.isNotEmpty()))
+        }
+        Log.i(TAG, "OpenVGDB $platform: ${merged.size} titles, ${real.size} real")
 
         real.map { row ->
             Game(

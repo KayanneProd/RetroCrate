@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.kayanne.retrocrate.data.persistence.RecentSearchesStore
 import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.domain.model.Game
+import com.kayanne.retrocrate.domain.model.GameCollection
 import com.kayanne.retrocrate.domain.model.Platform
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.launch
@@ -20,6 +21,7 @@ private const val DEBOUNCE_MS = 300L
 private const val SAVE_DEBOUNCE_MS = 900L
 private const val MAX_RESULTS = 120
 private const val MAX_GENRE_CHIPS = 24
+private const val MAX_COLLECTIONS = 8
 
 @OptIn(FlowPreview::class)
 class SearchViewModel : ViewModel() {
@@ -39,7 +41,8 @@ class SearchViewModel : ViewModel() {
         _selectedGenre,
         _selectedPlatform,
         repository.catalog,
-    ) { debouncedQuery, selectedGenre, selectedPlatform, games ->
+        repository.collections,
+    ) { debouncedQuery, selectedGenre, selectedPlatform, games, allCollections ->
         val availableGenres = games.flatMap { it.genres }
             .groupingBy { it }
             .eachCount()
@@ -66,11 +69,23 @@ class SearchViewModel : ViewModel() {
                 .toList()
         }
 
+        // Collections whose franchise name matches the typed query (no genre/platform filtering —
+        // a collection spans both), shown above the game results. Searching "zelda" surfaces the
+        // Zelda collection plus the individual games.
+        val matchingCollections = if (debouncedQuery.isBlank()) {
+            emptyList()
+        } else {
+            allCollections
+                .filter { it.name.contains(debouncedQuery, ignoreCase = true) }
+                .take(MAX_COLLECTIONS)
+        }
+
         SearchUiState(
             debouncedQuery = debouncedQuery,
             selectedGenre = selectedGenre,
             selectedPlatform = selectedPlatform,
             results = results,
+            collections = matchingCollections,
             availableGenres = availableGenres,
             availablePlatforms = availablePlatforms,
             hasFilter = hasFilter,
@@ -121,6 +136,7 @@ data class SearchUiState(
     val selectedGenre: String? = null,
     val selectedPlatform: Platform? = null,
     val results: List<Game> = emptyList(),
+    val collections: List<GameCollection> = emptyList(),
     val availableGenres: List<String> = emptyList(),
     val availablePlatforms: List<Platform> = emptyList(),
     val hasFilter: Boolean = false,

@@ -38,6 +38,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.kayanne.retrocrate.core.designsystem.Spacing
 import com.kayanne.retrocrate.feature.browse.BrowseScreen
+import com.kayanne.retrocrate.feature.collections.CollectionsScreen
 import com.kayanne.retrocrate.feature.detail.GameDetailScreen
 import com.kayanne.retrocrate.feature.downloads.DownloadsScreen
 import com.kayanne.retrocrate.feature.home.HomeScreen
@@ -79,12 +80,19 @@ fun RetroCrateApp() {
                     contentPadding = padding,
                     onOpenGame = { gameId -> navController.navigate(GameDetailRoute(gameId)) },
                     onOpenBrowse = { kind, value -> navController.navigate(BrowseRoute(kind, value)) },
+                    onOpenCollections = { navController.navigate(CollectionsRoute) },
                 )
             }
             composable<BrowseRoute> {
                 BrowseScreen(
                     onBack = { navController.popBackStack() },
                     onOpenGame = { gameId -> navController.navigate(GameDetailRoute(gameId)) },
+                )
+            }
+            composable<CollectionsRoute> {
+                CollectionsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenCollection = { keyword -> navController.navigate(BrowseRoute("collection", keyword)) },
                 )
             }
             composable<LibraryRoute> {
@@ -97,6 +105,7 @@ fun RetroCrateApp() {
                 SearchScreen(
                     contentPadding = padding,
                     onOpenGame = { gameId -> navController.navigate(GameDetailRoute(gameId)) },
+                    onOpenCollection = { keyword -> navController.navigate(BrowseRoute("collection", keyword)) },
                 )
             }
             composable<SettingsRoute> {

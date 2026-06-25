@@ -1,5 +1,6 @@
 package com.kayanne.retrocrate.feature.search
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,8 +11,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -27,22 +31,33 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.designsystem.Spacing
+import com.kayanne.retrocrate.core.ui.CollectionCard
 import com.kayanne.retrocrate.core.ui.GameCapsule
 import com.kayanne.retrocrate.domain.model.Game
+import com.kayanne.retrocrate.domain.model.GameCollection
 import com.kayanne.retrocrate.domain.model.Platform
 
 @Composable
 fun SearchScreen(
     contentPadding: PaddingValues,
     onOpenGame: (String) -> Unit,
+    onOpenCollection: (String) -> Unit,
     viewModel: SearchViewModel = viewModel(),
 ) {
     val query by viewModel.query.collectAsStateWithLifecycle()
@@ -53,35 +68,60 @@ fun SearchScreen(
         onOpenGame(id)
     }
 
+    val gridState = rememberLazyGridState()
+    // Collapse the search field + filter chips while the user scrolls down through results, and
+    // bring them back when scrolling up (or returning to the top) — so results get the whole screen
+    // while browsing, and refining is one swipe up away. Steam Big Picture-style content-forward
+    // chrome; nothing is permanently hidden.
+    var headerVisible by remember { mutableStateOf(true) }
+    val atTop by remember {
+        derivedStateOf { gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0 }
+    }
+    val scrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y < -SCROLL_HIDE_THRESHOLD) headerVisible = false
+                else if (available.y > SCROLL_SHOW_THRESHOLD) headerVisible = true
+                return Offset.Zero
+            }
+        }
+    }
+    val showHeader = headerVisible || atTop
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(contentPadding),
+            .padding(contentPadding)
+            .nestedScroll(scrollConnection),
     ) {
-        SearchField(
-            query = query,
-            onQueryChange = viewModel::onQueryChange,
-            onClear = viewModel::onClear,
-            modifier = Modifier.padding(
-                start = Spacing.l,
-                end = Spacing.l,
-                top = Spacing.m,
-                bottom = Spacing.s,
-            ),
-        )
-        if (uiState.availablePlatforms.size > 1) {
-            PlatformFilterRow(
-                platforms = uiState.availablePlatforms,
-                selectedPlatform = uiState.selectedPlatform,
-                onPlatformToggle = viewModel::onPlatformToggle,
-            )
-        }
-        if (uiState.availableGenres.isNotEmpty()) {
-            GenreFilterRow(
-                genres = uiState.availableGenres,
-                selectedGenre = uiState.selectedGenre,
-                onGenreToggle = viewModel::onGenreToggle,
-            )
+        AnimatedVisibility(visible = showHeader) {
+            Column {
+                SearchField(
+                    query = query,
+                    onQueryChange = viewModel::onQueryChange,
+                    onClear = viewModel::onClear,
+                    modifier = Modifier.padding(
+                        start = Spacing.l,
+                        end = Spacing.l,
+                        top = Spacing.s,
+                        bottom = Spacing.xs,
+                    ),
+                )
+                if (uiState.availablePlatforms.size > 1) {
+                    PlatformFilterRow(
+                        platforms = uiState.availablePlatforms,
+                        selectedPlatform = uiState.selectedPlatform,
+                        onPlatformToggle = viewModel::onPlatformToggle,
+                    )
+                }
+                if (uiState.availableGenres.isNotEmpty()) {
+                    GenreFilterRow(
+                        genres = uiState.availableGenres,
+                        selectedGenre = uiState.selectedGenre,
+                        onGenreToggle = viewModel::onGenreToggle,
+                    )
+                }
+            }
         }
         Box(modifier = Modifier.fillMaxSize()) {
             when {
@@ -92,7 +132,7 @@ fun SearchScreen(
                     platformCount = uiState.availablePlatforms.size,
                     enrichedGenreCount = uiState.availableGenres.size,
                 )
-                uiState.results.isEmpty() -> EmptyResults(
+                uiState.results.isEmpty() && uiState.collections.isEmpty() -> EmptyResults(
                     query = uiState.debouncedQuery,
                     selectedGenre = uiState.selectedGenre,
                     selectedPlatform = uiState.selectedPlatform,
@@ -100,12 +140,18 @@ fun SearchScreen(
                 )
                 else -> ResultsGrid(
                     games = uiState.results,
+                    collections = uiState.collections,
+                    gridState = gridState,
                     onOpenGame = openGame,
+                    onOpenCollection = onOpenCollection,
                 )
             }
         }
     }
 }
+
+private const val SCROLL_HIDE_THRESHOLD = 8f
+private const val SCROLL_SHOW_THRESHOLD = 4f
 
 @Composable
 private fun SearchField(
@@ -198,9 +244,13 @@ private fun GenreFilterRow(
 @Composable
 private fun ResultsGrid(
     games: List<Game>,
+    collections: List<GameCollection>,
+    gridState: LazyGridState,
     onOpenGame: (String) -> Unit,
+    onOpenCollection: (String) -> Unit,
 ) {
     LazyVerticalGrid(
+        state = gridState,
         columns = GridCells.Adaptive(minSize = 120.dp),
         contentPadding = PaddingValues(
             start = Spacing.l,
@@ -212,11 +262,49 @@ private fun ResultsGrid(
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
         modifier = Modifier.fillMaxSize(),
     ) {
+        if (collections.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "collections") {
+                CollectionResults(collections = collections, onOpenCollection = onOpenCollection)
+            }
+            if (games.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "games-header") {
+                    Text(
+                        text = "Games",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
         items(items = games, key = { it.id }) { game ->
             GameCapsule(
                 game = game,
                 onClick = { onOpenGame(game.id) },
             )
+        }
+    }
+}
+
+@Composable
+private fun CollectionResults(
+    collections: List<GameCollection>,
+    onOpenCollection: (String) -> Unit,
+) {
+    Column {
+        Text(
+            text = "Collections",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(bottom = Spacing.xs),
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
+            items(collections, key = { it.id }) { collection ->
+                CollectionCard(
+                    collection = collection,
+                    onClick = { onOpenCollection(collection.id) },
+                    width = 140.dp,
+                )
+            }
         }
     }
 }

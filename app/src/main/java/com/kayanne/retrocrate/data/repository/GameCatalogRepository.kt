@@ -3,12 +3,14 @@ package com.kayanne.retrocrate.data.repository
 import android.content.Context
 import android.util.Log
 import com.kayanne.retrocrate.data.persistence.CatalogStore
+import com.kayanne.retrocrate.data.source.FranchiseBuilder
 import com.kayanne.retrocrate.data.source.PopularityService
 import com.kayanne.retrocrate.data.source.RomMatcher
 import com.kayanne.retrocrate.data.source.openvgdb.OpenVgdbSource
 import com.kayanne.retrocrate.data.source.switchcatalog.SwitchCatalogSource
 import com.kayanne.retrocrate.data.source.titledb.TitledbSource
 import com.kayanne.retrocrate.domain.model.Game
+import com.kayanne.retrocrate.domain.model.GameCollection
 import com.kayanne.retrocrate.domain.model.Platform
 import com.kayanne.retrocrate.domain.repository.GameRepository
 import kotlinx.coroutines.CoroutineScope
@@ -16,11 +18,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -164,24 +168,48 @@ object GameCatalogRepository : GameRepository {
         }
     }
 
-    // The carousel: recognizable (live-popular) + newest downloadable games with art, sampled
-    // across platforms and reshuffled daily — leads with games the user knows, stays current, and
-    // is never the same set twice in a row.
+    // Reshuffled each time Home is (re)opened (HomeViewModel) so the hero never feels static.
+    private val featuredNonce = MutableStateFlow(Random.nextLong())
+
+    fun reshuffleFeatured() {
+        featuredNonce.value = Random.nextLong()
+    }
+
+    // The carousel: explicitly "new + popular", a fresh mix each visit. Half genuinely-newest
+    // releases (Switch quality-gated so they're recognizable, not shovelware) + half live-popular
+    // (IA download counts ∩ catalog), shuffled by a rotating nonce. Deliberately does NOT spread one
+    // game per platform — that old `diverseSample` behaviour forced an entry from every platform onto
+    // the hero (so a GameCube favourite like Harry Potter showed up every single time); the hero is
+    // now whatever's new + popular, different on each open.
     override fun observeFeatured(): Flow<List<Game>> =
-        combine(_catalog, PopularityService.popularTitles) { games, popular ->
+        combine(_catalog, PopularityService.popularTitles, featuredNonce) { games, popular, nonce ->
             val withArt = games.filter { it.boxArtUrl != null && it.sources.isNotEmpty() }
             val byNorm = HashMap<String, Game>()
             for (game in withArt) byNorm.putIfAbsent(RomMatcher.normalizeTitle(game.title), game)
 
-            val popularGames = popular.mapNotNull { byNorm[RomMatcher.normalizeTitle(it)] }
-            val recent = withArt.sortedByDescending { it.releaseYear ?: 0 }.take(40)
-            val pool = (popularGames + recent).distinct()
+            val newest = withArt
+                .filter { it.platform != Platform.SWITCH || TitledbSource.isNewArrivalQuality(it) }
+                .sortedByDescending { it.sortDate() }
+                .take(30)
+            val popularGames = popular.mapNotNull { byNorm[RomMatcher.normalizeTitle(it)] }.take(30)
 
-            pool.diverseSample(FEATURED_COUNT, daySeed()).ifEmpty { withArt.take(FEATURED_COUNT) }
+            val rnd = Random(nonce)
+            val half = FEATURED_COUNT / 2
+            val featured = (newest.shuffled(rnd).take(half) + popularGames.shuffled(rnd).take(FEATURED_COUNT - half))
+                .distinctBy { it.id }
+                .shuffled(rnd)
+            featured.take(FEATURED_COUNT).ifEmpty { withArt.shuffled(rnd).take(FEATURED_COUNT) }
         }.flowOn(Dispatchers.Default)
 
+    // The full catalog now carries the broad Switch library (so search/collections are complete), so
+    // "New Arrivals" applies the strict quality cut to Switch here — recognizable publisher + real
+    // description — to keep Home's newest rail free of shovelware. Retro platforms pass through (their
+    // "newest" is decades old and never ranks into this rail anyway).
     override fun observeNewArrivals(): Flow<List<Game>> =
-        _catalog.map { games -> games.newest(RAIL_COUNT) }.flowOn(Dispatchers.Default)
+        _catalog.map { games ->
+            games.filter { it.platform != Platform.SWITCH || TitledbSource.isNewArrivalQuality(it) }
+                .newest(RAIL_COUNT)
+        }.flowOn(Dispatchers.Default)
 
     // Live popularity from Internet Archive download counts, intersected with our catalog and
     // topped up with a daily-rotating sample so the rail is always full.
@@ -211,6 +239,18 @@ object GameCatalogRepository : GameRepository {
     override fun observePlatform(platform: Platform): Flow<List<Game>> =
         _catalog.map { games -> games.filter { it.platform == platform }.take(RAIL_COUNT) }
             .flowOn(Dispatchers.Default)
+
+    // Franchise collections, derived from the catalog (see FranchiseBuilder) and recomputed when the
+    // catalog changes (e.g. after a titledb refresh). Cached so building only runs while observed.
+    val collections: StateFlow<List<GameCollection>> = _catalog
+        .map { FranchiseBuilder.build(it) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(bgScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun observeCollections(): Flow<List<GameCollection>> = collections
+
+    fun collectionMembers(keyword: String): List<Game> =
+        FranchiseBuilder.members(_catalog.value, keyword)
 
     fun observeTopGenres(limit: Int): Flow<List<String>> =
         _catalog.map { games ->

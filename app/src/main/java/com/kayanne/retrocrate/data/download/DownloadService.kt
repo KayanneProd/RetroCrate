@@ -85,7 +85,7 @@ class DownloadService : Service() {
     private fun notificationFor(downloads: Map<String, DownloadState>): Notification {
         val inProgress = downloads.values.filterIsInstance<DownloadState.InProgress>()
         val active = downloads.values.count {
-            it is DownloadState.InProgress || it is DownloadState.Queued
+            it is DownloadState.InProgress || it is DownloadState.Queued || it is DownloadState.Preparing
         }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)

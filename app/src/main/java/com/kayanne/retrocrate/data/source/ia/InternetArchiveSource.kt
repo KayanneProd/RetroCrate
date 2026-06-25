@@ -37,7 +37,9 @@ object InternetArchiveSource : RomSource {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
     // Archive wrappers a whole-game dump is commonly packaged as on IA, beyond bare ROM extensions.
-    private val ARCHIVE_EXTENSIONS = setOf("tar", "gz", "tgz", "bz2", "xz", "zip", "7z", "rar")
+    // Restricted to formats ArchiveExtractor can actually unwrap (tar/gz/zip) — returning a .rar/.7z
+    // would just land a useless archive on disk, so we'd rather fall through to another source.
+    private val ARCHIVE_EXTENSIONS = setOf("tar", "gz", "tgz", "zip")
 
     override suspend fun resolve(query: ResolveQuery): ResolvedDownload? = withContext(Dispatchers.IO) {
         // Switch dumps on IA are catalogued by Title ID, not the game name — try that first.
@@ -66,7 +68,8 @@ object InternetArchiveSource : RomSource {
                 romFileName = query.romFileName,
                 preferredRegion = query.preferredRegion,
                 candidates = files.map { RomMatcher.Candidate(it.name, it.size?.toLongOrNull()) },
-            )?.let { return@withContext download(doc.identifier, it.filename, it.sizeBytes) }
+            )?.takeIf { isUsablePayload(it.filename, query.platform) }
+                ?.let { return@withContext download(doc.identifier, it.filename, it.sizeBytes) }
         }
 
         // Strategy 2: the item's *title* clearly matches — take its main payload (how big disc/Switch
@@ -118,6 +121,17 @@ object InternetArchiveSource : RomSource {
             .firstOrNull()
     }
 
+    // A file we can actually use: this platform's native ROM extension, or — for non-Switch — an
+    // archive ArchiveExtractor can unwrap. Switch is never an archive here (IA's Switch archives are
+    // routinely unextractable .rar / unpacked CDN folders, and we can't pull an NSP out of those);
+    // requiring a direct .nsp/.xci lets the chain fall through to debrid for the real file.
+    private fun isUsablePayload(filename: String, platform: Platform): Boolean {
+        val ext = extensionOf(filename)
+        if (ext in RomMatcher.extensionsFor(platform)) return true
+        if (platform == Platform.SWITCH) return false
+        return ext in ARCHIVE_EXTENSIONS
+    }
+
     private fun isSidecar(name: String): Boolean {
         val lower = name.lowercase()
         if (lower.endsWith("_meta.xml") || lower.endsWith("_files.xml") ||
@@ -164,9 +178,11 @@ object InternetArchiveSource : RomSource {
     // Largest payload that carries the Title ID (so we get the right game, not a DLC/other title in
     // a shared item), falling back to the largest payload overall.
     private fun pickTitleIdPayload(files: List<IaFile>, tid: String): IaFile? {
+        // A direct Switch ROM, or an extractable archive wrapping one — never a .rar/.7z we can't open.
+        val switchExts = RomMatcher.extensionsFor(Platform.SWITCH)
         val candidates = files.filter {
             !isSidecar(it.name) &&
-                (RomMatcher.hasRomExtension(it.name) || extensionOf(it.name) in ARCHIVE_EXTENSIONS)
+                (extensionOf(it.name) in switchExts || extensionOf(it.name) in ARCHIVE_EXTENSIONS)
         }
         val withTid = candidates.filter { tid in alnum(it.name) }
         return withTid.ifEmpty { candidates }.maxByOrNull { it.size?.toLongOrNull() ?: 0L }

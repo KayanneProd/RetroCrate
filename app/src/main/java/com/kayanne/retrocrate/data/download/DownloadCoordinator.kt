@@ -7,6 +7,8 @@ import androidx.documentfile.provider.DocumentFile
 import com.kayanne.retrocrate.data.network.HttpClient
 import com.kayanne.retrocrate.data.persistence.DownloadHistoryStore
 import com.kayanne.retrocrate.data.persistence.SettingsStore
+import com.kayanne.retrocrate.data.source.debrid.DebridRomSource
+import com.kayanne.retrocrate.data.source.toResolveQuery
 import com.kayanne.retrocrate.domain.model.DownloadState
 import com.kayanne.retrocrate.domain.model.Game
 import kotlinx.coroutines.CoroutineScope
@@ -98,13 +100,27 @@ object DownloadCoordinator {
             return
         }
 
-        update(game.id, DownloadState.InProgress(bytesDone = 0, bytesTotal = null))
+        update(game.id, DownloadState.Preparing("Finding source…"))
 
-        val resolved = DownloadSourceResolver.resolve(game)
+        // Fast path: a directly-downloadable URL (Vimm's, a cached debrid torrent, or IA).
+        var resolved = DownloadSourceResolver.resolve(game)
+
+        // Slow path: nothing was instantly available — have debrid fetch the torrent server-side
+        // (shown as "Preparing"), then download the finished file. Only does anything if the user
+        // configured a debrid service and a matching torrent exists.
+        if (resolved == null) {
+            update(game.id, DownloadState.Preparing("Preparing on debrid…"))
+            resolved = DebridRomSource.resolveNonCached(game.toResolveQuery()) { progress ->
+                update(game.id, DownloadState.Preparing("Preparing on debrid…", progress))
+            }
+        }
+
         if (resolved == null) {
             update(game.id, DownloadState.Failed("No download source found for ${game.title}."))
             return
         }
+
+        update(game.id, DownloadState.InProgress(bytesDone = 0, bytesTotal = null))
 
         val request = Request.Builder()
             .url(resolved.downloadUrl)
