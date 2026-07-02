@@ -6,9 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -21,14 +26,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.TravelExplore
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -42,6 +52,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,6 +61,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.designsystem.Spacing
 import com.kayanne.retrocrate.core.ui.CollectionCard
 import com.kayanne.retrocrate.core.ui.GameCapsule
+import com.kayanne.retrocrate.data.repository.SwitchSyncState
 import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.domain.model.GameCollection
 import com.kayanne.retrocrate.domain.model.Platform
@@ -99,6 +112,7 @@ fun SearchScreen(
                 SearchField(
                     query = query,
                     onQueryChange = viewModel::onQueryChange,
+                    onSearch = viewModel::onSearch,
                     onClear = viewModel::onClear,
                     modifier = Modifier.padding(
                         start = Spacing.l,
@@ -127,23 +141,31 @@ fun SearchScreen(
             when {
                 !uiState.hasFilter -> SearchStartContent(
                     recentSearches = recentSearches,
-                    onRecentClick = viewModel::onQueryChange,
+                    onRecentClick = viewModel::onRecentSelected,
                     catalogSize = uiState.catalogSize,
                     platformCount = uiState.availablePlatforms.size,
                     enrichedGenreCount = uiState.availableGenres.size,
+                    switchSync = uiState.switchSync,
+                    onRetrySync = viewModel::onRetrySwitchSync,
                 )
-                uiState.results.isEmpty() && uiState.collections.isEmpty() -> EmptyResults(
-                    query = uiState.debouncedQuery,
-                    selectedGenre = uiState.selectedGenre,
-                    selectedPlatform = uiState.selectedPlatform,
-                    catalogSize = uiState.catalogSize,
-                )
+                // Fresh search with nothing to show yet → full-screen spinner.
+                uiState.searching && uiState.results.isEmpty() && uiState.collections.isEmpty() ->
+                    SearchingIndicator()
                 else -> ResultsGrid(
                     games = uiState.results,
                     collections = uiState.collections,
                     gridState = gridState,
                     onOpenGame = openGame,
                     onOpenCollection = onOpenCollection,
+                    query = uiState.submittedQuery,
+                    selectedGenre = uiState.selectedGenre,
+                    selectedPlatform = uiState.selectedPlatform,
+                    catalogSize = uiState.catalogSize,
+                    searching = uiState.searching,
+                    switchSync = uiState.switchSync,
+                    liveSearch = uiState.liveSearch,
+                    onSearchSources = viewModel::onSearchSources,
+                    onRetrySync = viewModel::onRetrySwitchSync,
                 )
             }
         }
@@ -157,13 +179,15 @@ private const val SCROLL_SHOW_THRESHOLD = 4f
 private fun SearchField(
     query: String,
     onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val keyboard = LocalSoftwareKeyboardController.current
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
-        placeholder = { Text("Search games…") },
+        placeholder = { Text("Search games — press enter") },
         leadingIcon = {
             Icon(Icons.Outlined.Search, contentDescription = null)
         },
@@ -175,6 +199,11 @@ private fun SearchField(
             }
         },
         singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = {
+            onSearch()
+            keyboard?.hide()
+        }),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -248,7 +277,17 @@ private fun ResultsGrid(
     gridState: LazyGridState,
     onOpenGame: (String) -> Unit,
     onOpenCollection: (String) -> Unit,
+    query: String,
+    selectedGenre: String?,
+    selectedPlatform: Platform?,
+    catalogSize: Int,
+    searching: Boolean,
+    switchSync: SwitchSyncState,
+    liveSearch: LiveSearchState,
+    onSearchSources: () -> Unit,
+    onRetrySync: () -> Unit,
 ) {
+    val liveResults = (liveSearch as? LiveSearchState.Loaded)?.results.orEmpty()
     LazyVerticalGrid(
         state = gridState,
         columns = GridCells.Adaptive(minSize = 120.dp),
@@ -262,26 +301,184 @@ private fun ResultsGrid(
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
         modifier = Modifier.fillMaxSize(),
     ) {
+        // Refining over existing results (changed a chip / re-ran) → a thin bar so the previous
+        // results stay visible while the new ranking runs.
+        if (searching) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "searching-bar") {
+                LinearProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        if (switchSync is SwitchSyncState.Updating || switchSync is SwitchSyncState.Failed) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "sync-banner") {
+                SyncBanner(switchSync = switchSync, onRetry = onRetrySync)
+            }
+        }
         if (collections.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "collections") {
                 CollectionResults(collections = collections, onOpenCollection = onOpenCollection)
             }
-            if (games.isNotEmpty()) {
+        }
+        if (games.isNotEmpty()) {
+            if (collections.isNotEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "games-header") {
-                    Text(
-                        text = "Games",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                    SectionLabel("Games")
+                }
+            }
+            items(items = games, key = { it.id }) { game ->
+                GameCapsule(game = game, onClick = { onOpenGame(game.id) })
+            }
+        } else if (collections.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "empty-local") {
+                EmptyLocalMessage(query, selectedGenre, selectedPlatform, catalogSize)
+            }
+        }
+
+        // "Search beyond the catalog" — only meaningful when there's a typed query. Lets the user
+        // reach the live download sources for anything the local catalog doesn't list.
+        if (query.isNotBlank()) {
+            item(span = { GridItemSpan(maxLineSpan) }, key = "source-search") {
+                SourceSearchControl(
+                    query = query,
+                    liveSearch = liveSearch,
+                    onSearchSources = onSearchSources,
+                )
+            }
+            if (liveResults.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "live-header") {
+                    SectionLabel("From sources")
+                }
+                items(items = liveResults, key = { "live:${it.id}" }) { game ->
+                    GameCapsule(game = game, onClick = { onOpenGame(game.id) })
                 }
             }
         }
-        items(items = games, key = { it.id }) { game ->
-            GameCapsule(
-                game = game,
-                onClick = { onOpenGame(game.id) },
+    }
+}
+
+@Composable
+private fun SearchingIndicator() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(Spacing.m))
+            Text(
+                text = "Searching…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+}
+
+@Composable
+private fun SyncBanner(switchSync: SwitchSyncState, onRetry: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when (switchSync) {
+            is SwitchSyncState.Updating -> {
+                CircularProgressIndicator(
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = "Updating game library…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = Spacing.s),
+                )
+            }
+            is SwitchSyncState.Failed -> {
+                Text(
+                    text = switchSync.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onRetry) { Text("Retry") }
+            }
+            else -> Unit
+        }
+    }
+}
+
+// The escalation control: a button to search the live sources, plus the loading/empty/error states
+// of that search. Results themselves render in the grid under a "From sources" header.
+@Composable
+private fun SourceSearchControl(
+    query: String,
+    liveSearch: LiveSearchState,
+    onSearchSources: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = Spacing.s)) {
+        when (liveSearch) {
+            is LiveSearchState.Loading -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "Searching sources…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = Spacing.s),
+                    )
+                }
+            }
+            is LiveSearchState.Empty -> {
+                Text(
+                    text = "No additional results from the sources for \"$query\".",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(Spacing.s))
+                SourceSearchButton(query, onSearchSources)
+            }
+            is LiveSearchState.Error -> {
+                Text(
+                    text = "Couldn't reach the sources. Check your connection.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(Spacing.s))
+                SourceSearchButton(query, onSearchSources)
+            }
+            is LiveSearchState.Loaded -> Unit
+            is LiveSearchState.Idle -> SourceSearchButton(query, onSearchSources)
+        }
+    }
+}
+
+@Composable
+private fun SourceSearchButton(query: String, onSearchSources: () -> Unit) {
+    FilledTonalButton(onClick = onSearchSources) {
+        Icon(
+            imageVector = Icons.Outlined.TravelExplore,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = "Search sources for \"$query\"",
+            modifier = Modifier.padding(start = Spacing.s),
+        )
     }
 }
 
@@ -316,8 +513,15 @@ private fun SearchStartContent(
     catalogSize: Int,
     platformCount: Int,
     enrichedGenreCount: Int,
+    switchSync: SwitchSyncState,
+    onRetrySync: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
+        if (switchSync is SwitchSyncState.Updating || switchSync is SwitchSyncState.Failed) {
+            Box(modifier = Modifier.padding(horizontal = Spacing.l)) {
+                SyncBanner(switchSync = switchSync, onRetry = onRetrySync)
+            }
+        }
         if (recentSearches.isNotEmpty()) {
             Row(
                 modifier = Modifier.padding(start = Spacing.l, top = Spacing.s, bottom = Spacing.xs),
@@ -392,27 +596,26 @@ private fun SearchPlaceholder(catalogSize: Int, platformCount: Int, enrichedGenr
     }
 }
 
+// Shown as a full-span grid row when nothing in the local catalog matches — the live source-search
+// control renders just below it, so the user can always escalate the same query to the sources.
 @Composable
-private fun EmptyResults(
+private fun EmptyLocalMessage(
     query: String,
     selectedGenre: String?,
     selectedPlatform: Platform?,
     catalogSize: Int,
 ) {
     val message = buildString {
-        append("No matches")
+        append("No matches in your library")
         if (query.isNotBlank()) append(" for \"$query\"")
         if (selectedGenre != null) append(" in $selectedGenre")
         if (selectedPlatform != null) append(" on ${selectedPlatform.displayName}")
-        append(" across $catalogSize games.")
+        append(" (across $catalogSize games).")
     }
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(Spacing.xl),
-        )
-    }
+    Text(
+        text = message,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.m),
+    )
 }

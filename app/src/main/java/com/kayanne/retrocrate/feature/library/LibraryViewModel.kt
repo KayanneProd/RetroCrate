@@ -5,7 +5,10 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kayanne.retrocrate.data.persistence.LibraryStore
 import com.kayanne.retrocrate.data.persistence.SettingsStore
+import com.kayanne.retrocrate.data.repository.GameCatalogRepository
+import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.domain.model.Platform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,9 +26,18 @@ class LibraryViewModel : ViewModel() {
     val uiState: StateFlow<LibraryUiState> = combine(
         SettingsStore.platformFolders,
         _files,
-    ) { folders, files ->
-        LibraryUiState(configuredPlatforms = folders.keys, files = files)
+        LibraryStore.wishlist,
+        GameCatalogRepository.catalog,
+    ) { folders, files, wishlistIds, catalog ->
+        val byId = catalog.associateBy { it.id }
+        // Newest-added first; drop ids no longer in the catalog.
+        val wishlist = wishlistIds.asReversed().mapNotNull { byId[it] }
+        LibraryUiState(configuredPlatforms = folders.keys, files = files, wishlist = wishlist)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState())
+
+    init {
+        viewModelScope.launch { GameCatalogRepository.ensureLoaded() }
+    }
 
     fun refresh(context: Context) {
         viewModelScope.launch {
@@ -65,6 +77,7 @@ class LibraryViewModel : ViewModel() {
 data class LibraryUiState(
     val configuredPlatforms: Set<Platform> = emptySet(),
     val files: List<LibraryFile> = emptyList(),
+    val wishlist: List<Game> = emptyList(),
 )
 
 data class LibraryFile(

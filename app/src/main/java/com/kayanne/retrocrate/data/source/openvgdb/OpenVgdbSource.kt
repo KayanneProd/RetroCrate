@@ -212,8 +212,9 @@ object OpenVgdbSource {
             }
         }
 
-    // Mappings verified against OpenVGDB v29.0 SYSTEMS table. Dreamcast and PS2 are NOT in
-    // OpenVGDB — those platforms get null and drop out of SUPPORTED_PLATFORMS.
+    // Mappings verified against the bundled OpenVGDB SYSTEMS table (systemShortName column).
+    // Dreamcast, PS2, Wii U, 3DS and Vita are NOT in OpenVGDB — those get null here and are catalogued
+    // from libretro instead (LibretroCatalogSource); they drop out of SUPPORTED_PLATFORMS.
     private fun systemShortNameFor(platform: Platform): String? = when (platform) {
         Platform.NES -> "NES"
         Platform.SNES -> "SNES"
@@ -223,9 +224,21 @@ object OpenVgdbSource {
         Platform.GAME_BOY -> "GB"
         Platform.GAME_BOY_COLOR -> "GBC"
         Platform.GAME_BOY_ADVANCE -> "GBA"
+        Platform.VIRTUAL_BOY -> "VB"
         Platform.NINTENDO_DS -> "NDS"
         Platform.GENESIS -> "MD"
+        Platform.SEGA_MASTER_SYSTEM -> "SMS"
+        Platform.GAME_GEAR -> "GG"
+        Platform.SEGA_CD -> "SCD"
+        Platform.SEGA_32X -> "32X"
         Platform.SATURN -> "Saturn"
+        Platform.TURBOGRAFX_16 -> "PCE"
+        Platform.ATARI_2600 -> "2600"
+        Platform.ATARI_5200 -> "5200"
+        Platform.ATARI_7800 -> "7800"
+        Platform.ATARI_LYNX -> "Lynx"
+        Platform.ATARI_JAGUAR -> "Jaguar"
+        Platform.THREEDO -> "3DO"
         Platform.PS1 -> "PSX"
         Platform.PSP -> "PSP"
         else -> null

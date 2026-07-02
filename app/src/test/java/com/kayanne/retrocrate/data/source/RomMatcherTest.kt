@@ -48,6 +48,36 @@ class RomMatcherTest {
     }
 
     @Test
+    fun `new platforms expose their native rom extensions`() {
+        // Group A / Group B platforms must be matchable by extension or downloads fall through.
+        assertTrue("sms" in RomMatcher.extensionsFor(Platform.SEGA_MASTER_SYSTEM))
+        assertTrue("gg" in RomMatcher.extensionsFor(Platform.GAME_GEAR))
+        assertTrue("pce" in RomMatcher.extensionsFor(Platform.TURBOGRAFX_16))
+        assertTrue("vb" in RomMatcher.extensionsFor(Platform.VIRTUAL_BOY))
+        assertTrue("lnx" in RomMatcher.extensionsFor(Platform.ATARI_LYNX))
+        assertTrue("a26" in RomMatcher.extensionsFor(Platform.ATARI_2600))
+        assertTrue("j64" in RomMatcher.extensionsFor(Platform.ATARI_JAGUAR))
+        assertTrue("iso" in RomMatcher.extensionsFor(Platform.PS2))
+        assertTrue("3ds" in RomMatcher.extensionsFor(Platform.NINTENDO_3DS))
+        assertTrue("vpk" in RomMatcher.extensionsFor(Platform.PS_VITA))
+    }
+
+    @Test
+    fun `picks the requested new-platform rom by extension`() {
+        val match = RomMatcher.bestMatch(
+            title = "Sonic the Hedgehog",
+            platform = Platform.GAME_GEAR,
+            romFileName = null,
+            preferredRegion = "USA",
+            candidates = files(
+                "Sonic the Hedgehog (USA, Europe).sms",
+                "Sonic the Hedgehog (USA, Europe).gg",
+            ),
+        )
+        assertEquals("Sonic the Hedgehog (USA, Europe).gg", match?.filename)
+    }
+
+    @Test
     fun `matches title when wrapped in a zip`() {
         val match = RomMatcher.bestMatch(
             title = "Chrono Trigger",
@@ -241,6 +271,26 @@ class RomMatcherTest {
             candidates = files("Mother 3 (Japan).gba"),
         )
         assertEquals("Mother 3 (Japan).gba", match?.filename)
+    }
+
+    @Test
+    fun `matches a Wii U wua file from the curated IA collection`() {
+        // Why Wii U now resolves: the curated IA item (Wiiu_Arquivista) ships each game as a direct
+        // Cemu .wua named "<Title> (US).wua". The .wua extension must count as native Wii U, and the
+        // request must pick the right game out of the 54-game item, not the first .wua.
+        assertTrue("wua" in RomMatcher.extensionsFor(Platform.WII_U))
+        val match = RomMatcher.bestMatch(
+            title = "Mario Kart 8",
+            platform = Platform.WII_U,
+            romFileName = null,
+            preferredRegion = "USA",
+            candidates = files(
+                "Bayonetta 2 (US).wua",
+                "Mario Kart 8 (US).wua",
+                "Splatoon (US).wua",
+            ),
+        )
+        assertEquals("Mario Kart 8 (US).wua", match?.filename)
     }
 
     @Test

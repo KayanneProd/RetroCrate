@@ -17,11 +17,15 @@ object RomMatcher {
 
     val ROM_EXTENSIONS: Set<String> = setOf(
         // Nintendo cartridge / disc
-        "nes", "fds", "unf", "smc", "sfc", "z64", "n64", "v64", "gb", "gbc", "gba",
-        "nds", "dsi", "srl", "3ds", "cia", "iso", "wbfs", "rvz", "gcm", "gcz", "wad", "nsp", "xci",
-        "nsz", "xcz", "wud", "wux", "vpk", "cso",
+        "nes", "fds", "unf", "smc", "sfc", "z64", "n64", "v64", "gb", "gbc", "gba", "vb",
+        "nds", "dsi", "srl", "3ds", "cci", "cxi", "cia", "iso", "wbfs", "rvz", "gcm", "gcz", "wad", "nsp", "xci",
+        "nsz", "xcz", "wud", "wux", "wua", "vpk", "cso",
         // Sega
         "md", "smd", "gen", "32x", "sms", "gg", "sat", "cdi", "gdi", "chd",
+        // NEC
+        "pce",
+        // Atari
+        "a26", "a52", "a78", "lnx", "lyx", "j64", "jag",
         // Sony
         "img", "cue", "bin", "pbp", "cso",
         // Archives the ROM is usually wrapped in
@@ -44,16 +48,28 @@ object RomMatcher {
         Platform.N64 -> setOf("z64", "n64", "v64")
         Platform.GAMECUBE -> setOf("iso", "gcm", "gcz", "rvz")
         Platform.WII -> setOf("iso", "wbfs", "rvz", "wad", "gcz")
-        Platform.WII_U -> setOf("wud", "wux")
+        Platform.WII_U -> setOf("wud", "wux", "wua")
         Platform.SWITCH -> setOf("nsp", "xci", "nsz", "xcz")
         Platform.GAME_BOY -> setOf("gb")
         Platform.GAME_BOY_COLOR -> setOf("gbc")
         Platform.GAME_BOY_ADVANCE -> setOf("gba", "srl")
+        Platform.VIRTUAL_BOY -> setOf("vb")
         Platform.NINTENDO_DS -> setOf("nds", "dsi", "srl")
-        Platform.NINTENDO_3DS -> setOf("3ds", "cia")
+        Platform.NINTENDO_3DS -> setOf("3ds", "cci", "cxi", "cia")
         Platform.GENESIS -> setOf("md", "smd", "gen", "32x", "bin")
+        Platform.SEGA_MASTER_SYSTEM -> setOf("sms")
+        Platform.GAME_GEAR -> setOf("gg")
+        Platform.SEGA_CD -> setOf("iso", "bin", "cue", "chd", "img")
+        Platform.SEGA_32X -> setOf("32x", "bin", "md", "smd")
         Platform.SATURN -> setOf("sat", "cue", "bin", "iso", "chd", "img")
         Platform.DREAMCAST -> setOf("cdi", "gdi", "chd")
+        Platform.TURBOGRAFX_16 -> setOf("pce", "bin", "cue", "chd", "iso")
+        Platform.ATARI_2600 -> setOf("a26", "bin")
+        Platform.ATARI_5200 -> setOf("a52", "bin")
+        Platform.ATARI_7800 -> setOf("a78", "bin")
+        Platform.ATARI_LYNX -> setOf("lnx", "lyx")
+        Platform.ATARI_JAGUAR -> setOf("j64", "jag", "bin")
+        Platform.THREEDO -> setOf("iso", "bin", "cue", "chd", "img")
         Platform.PS1 -> setOf("bin", "cue", "img", "pbp", "chd", "iso")
         Platform.PS2 -> setOf("iso", "bin", "cue", "chd", "cso")
         Platform.PSP -> setOf("iso", "cso", "pbp", "chd")
@@ -75,10 +91,20 @@ object RomMatcher {
             Platform.GAME_BOY -> 8 * mb
             Platform.GAME_BOY_COLOR -> 16 * mb
             Platform.GAME_BOY_ADVANCE -> 64 * mb
+            Platform.VIRTUAL_BOY -> 4 * mb
             Platform.GENESIS -> 16 * mb
+            Platform.SEGA_MASTER_SYSTEM -> 8 * mb
+            Platform.GAME_GEAR -> 8 * mb
+            Platform.SEGA_32X -> 8 * mb
+            Platform.TURBOGRAFX_16 -> 8 * mb
+            Platform.ATARI_2600 -> 4 * mb
+            Platform.ATARI_5200 -> 4 * mb
+            Platform.ATARI_7800 -> 4 * mb
+            Platform.ATARI_LYNX -> 4 * mb
+            Platform.ATARI_JAGUAR -> 32 * mb
             Platform.NINTENDO_DS -> 1024 * mb
             Platform.NINTENDO_3DS, Platform.GAMECUBE, Platform.WII, Platform.WII_U,
-            Platform.SWITCH, Platform.SATURN, Platform.DREAMCAST,
+            Platform.SWITCH, Platform.SATURN, Platform.DREAMCAST, Platform.SEGA_CD, Platform.THREEDO,
             Platform.PS1, Platform.PS2, Platform.PSP, Platform.PS_VITA -> null
         }
     }

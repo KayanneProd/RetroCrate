@@ -133,6 +133,28 @@ object PremiumizeService : DebridService {
         }
     }
 
+    override suspend fun unlockHosterLink(url: String, settings: DebridSettings): ResolvedDownload? = withContext(Dispatchers.IO) {
+        val key = settings.premiumizeApiKey?.takeIf { it.isNotBlank() } ?: return@withContext null
+        val body = FormBody.Builder().add("apikey", key).add("src", url).build()
+        val response = runCatching {
+            postForm(DIRECTDL, body) { json.decodeFromString<DirectDl>(it) }
+        }.getOrElse {
+            Log.w(TAG, "directdl hoster link failed for $url", it)
+            return@withContext null
+        }
+        if (response.status != "success" || response.content.isEmpty()) {
+            Log.i(TAG, "Premiumize can't unlock $url (${response.status})")
+            return@withContext null
+        }
+        val file = response.content.firstOrNull { it.link.isNotBlank() } ?: return@withContext null
+        ResolvedDownload(
+            siteName = name,
+            filename = file.path.substringAfterLast('/').ifBlank { fileNameFromUrl(url) },
+            downloadUrl = file.link,
+            sizeBytes = file.size,
+        )
+    }
+
     private fun resolveFinished(key: String, transfer: Transfer, query: ResolveQuery): ResolvedDownload? {
         val fileId = transfer.file_id
         if (!fileId.isNullOrBlank()) {

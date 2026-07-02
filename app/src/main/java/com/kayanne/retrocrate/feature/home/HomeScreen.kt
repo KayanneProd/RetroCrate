@@ -15,6 +15,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -34,6 +36,7 @@ import com.kayanne.retrocrate.core.ui.GameRail
 import com.kayanne.retrocrate.core.ui.HeroCarousel
 import com.kayanne.retrocrate.core.ui.SectionHeader
 import com.kayanne.retrocrate.data.repository.LoadStatus
+import com.kayanne.retrocrate.data.repository.SwitchSyncState
 import com.kayanne.retrocrate.domain.model.GameCollection
 
 @Composable
@@ -154,6 +157,9 @@ private fun CatalogContent(
                 )
             }
         }
+        if (uiState.switchSync is SwitchSyncState.Updating) {
+            item("updating-notice") { UpdatingNotice() }
+        }
         if (uiState.newArrivals.isNotEmpty()) {
             item("new-arrivals") {
                 GameRail(
@@ -189,6 +195,28 @@ private fun CatalogContent(
                 GameRail(title = "Discover", games = uiState.discover, onGameClick = { onOpenGame(it.id) })
             }
         }
+    }
+}
+
+// Shown while the live Switch library is downloading for the first time, so "New Arrivals" briefly
+// running on the bundled classics reads as "still loading" rather than "this is wrong".
+@Composable
+private fun UpdatingNotice() {
+    Row(
+        modifier = Modifier.padding(horizontal = Spacing.l),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = "Updating game library…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = Spacing.s),
+        )
     }
 }
 

@@ -122,6 +122,23 @@ object RealDebridService : DebridService {
         }
     }
 
+    override suspend fun unlockHosterLink(url: String, settings: DebridSettings): ResolvedDownload? = withContext(Dispatchers.IO) {
+        val key = settings.realDebridApiKey?.takeIf { it.isNotBlank() } ?: return@withContext null
+        val unrestricted = runCatching {
+            json.decodeFromString<Unrestrict>(post("/unrestrict/link", key, "link" to url))
+        }.getOrElse {
+            Log.w(TAG, "unrestrict hoster link failed for $url", it)
+            return@withContext null
+        }
+        val direct = unrestricted.download.takeIf { it.isNotBlank() } ?: return@withContext null
+        ResolvedDownload(
+            siteName = name,
+            filename = unrestricted.filename.ifBlank { fileNameFromUrl(url) },
+            downloadUrl = direct,
+            sizeBytes = unrestricted.filesize,
+        )
+    }
+
     private suspend fun awaitFilesListed(id: String, key: String): Info? {
         repeat(POLL_ATTEMPTS) {
             val info = json.decodeFromString<Info>(get("/torrents/info/$id", key))

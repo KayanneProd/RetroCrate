@@ -2,6 +2,7 @@ package com.kayanne.retrocrate.data.source.ia
 
 import android.util.Log
 import com.kayanne.retrocrate.data.network.HttpClient
+import com.kayanne.retrocrate.data.source.DownloadCandidate
 import com.kayanne.retrocrate.data.source.ResolveQuery
 import com.kayanne.retrocrate.data.source.ResolvedDownload
 import com.kayanne.retrocrate.data.source.RomMatcher
@@ -37,11 +38,40 @@ object InternetArchiveSource : RomSource {
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
     // Archive wrappers a whole-game dump is commonly packaged as on IA, beyond bare ROM extensions.
-    // Restricted to formats ArchiveExtractor can actually unwrap (tar/gz/zip) — returning a .rar/.7z
-    // would just land a useless archive on disk, so we'd rather fall through to another source.
-    private val ARCHIVE_EXTENSIONS = setOf("tar", "gz", "tgz", "zip")
+    // All of these are formats DownloadCoordinator can unwrap: tar/gz/zip stream-extract, .7z and
+    // .rar (the latter RAR5, via the native 7-Zip engine) buffer-then-extract. Returning one we can't
+    // open would land a useless archive on disk, so the set is kept in sync with the coordinator.
+    private val ARCHIVE_EXTENSIONS = setOf("tar", "gz", "tgz", "zip", "7z", "rar")
+
+    // Curated multi-game IA items that hold many games as one item each. A title search can't surface
+    // these because the item is named for the collection ("Wii-U (Personal Collection)"), not the
+    // game — so we scan their file lists directly and match per-file with RomMatcher. This is the
+    // reliable Wii U path (Vimm's doesn't vault it; its torrents are dead): Wiiu_Arquivista is 54
+    // games as direct .wua files Cemu loads as-is, named "<Title> (US).wua". Switch IA coverage of
+    // base games is thin, so its real path stays debrid (path B); the one item here is a small bonus.
+    // Like VimmsPaths' vault slugs, this is curated source discovery, not a hardcoded game list.
+    private val CURATED_ITEMS: Map<Platform, List<String>> = mapOf(
+        Platform.WII_U to listOf("Wiiu_Arquivista", "wiiu-game-dumps"),
+        Platform.SWITCH to listOf("switch-dump-nsp-xci"),
+    )
 
     override suspend fun resolve(query: ResolveQuery): ResolvedDownload? = withContext(Dispatchers.IO) {
+        // Strategy 0: curated multi-game items (e.g. the 54-game Wii U .wua collection) that a title
+        // search can't reach because the item is named for the collection, not the game. Scan their
+        // files and take a confident, platform-correct match — the strongest signal we have for Wii U.
+        for (identifier in CURATED_ITEMS[query.platform].orEmpty()) {
+            val files = metadataFiles(identifier)
+            if (files.isEmpty()) continue
+            RomMatcher.bestMatch(
+                title = query.title,
+                platform = query.platform,
+                romFileName = query.romFileName,
+                preferredRegion = query.preferredRegion,
+                candidates = files.map { RomMatcher.Candidate(it.name, it.size?.toLongOrNull()) },
+            )?.takeIf { isUsablePayload(it.filename, query.platform) }
+                ?.let { return@withContext download(identifier, it.filename, it.sizeBytes) }
+        }
+
         // Switch dumps on IA are catalogued by Title ID, not the game name — try that first.
         query.titleId?.takeIf { it.isNotBlank() }?.let { tid ->
             resolveByTitleId(tid)?.let { return@withContext it }
@@ -86,6 +116,88 @@ object InternetArchiveSource : RomSource {
         null
     }
 
+    // Every usable file across the matching items, as pickable candidates — this is the fix for "IA
+    // auto-grabbed a junk file": the user sees the actual files (with size + which item) and chooses,
+    // or backs out. We only filter out sidecars and non-ROM/non-archive files (no auto-scoring here);
+    // picking is the user's call.
+    override suspend fun listCandidates(query: ResolveQuery): List<DownloadCandidate> = withContext(Dispatchers.IO) {
+        val out = ArrayList<DownloadCandidate>()
+        val platformExts = RomMatcher.extensionsFor(query.platform)
+
+        fun addFrom(identifier: String, itemTitle: String?) {
+            if (out.size >= MAX_CANDIDATES) return
+            val files = metadataFiles(identifier).filterNot { isSidecar(it.name) }
+            for (f in files) {
+                val ext = extensionOf(f.name)
+                if (ext !in platformExts && ext !in ARCHIVE_EXTENSIONS) continue
+                val size = f.size?.toLongOrNull()
+                out.add(
+                    DownloadCandidate(
+                        sourceName = siteName,
+                        label = f.name,
+                        region = null,
+                        sizeBytes = size,
+                        extra = itemTitle,
+                        resolve = { download(identifier, f.name, size) },
+                    ),
+                )
+            }
+        }
+
+        // Curated items hold many unrelated games, so (unlike a search hit, where the item already
+        // matched the game) only surface files whose title matches the request.
+        fun addMatchingFrom(identifier: String) {
+            val files = metadataFiles(identifier).filterNot { isSidecar(it.name) }
+            for (f in files) {
+                if (out.size >= MAX_CANDIDATES) break
+                val ext = extensionOf(f.name)
+                if (ext !in platformExts && ext !in ARCHIVE_EXTENSIONS) continue
+                val size = f.size?.toLongOrNull()
+                val matches = RomMatcher.bestMatch(
+                    title = query.title,
+                    platform = query.platform,
+                    romFileName = query.romFileName,
+                    preferredRegion = query.preferredRegion,
+                    candidates = listOf(RomMatcher.Candidate(f.name, size)),
+                ) != null
+                if (!matches) continue
+                out.add(
+                    DownloadCandidate(
+                        sourceName = siteName,
+                        label = f.name,
+                        region = null,
+                        sizeBytes = size,
+                        extra = identifier,
+                        resolve = { download(identifier, f.name, size) },
+                    ),
+                )
+            }
+        }
+        for (identifier in CURATED_ITEMS[query.platform].orEmpty()) addMatchingFrom(identifier)
+
+        // Switch dumps are catalogued by Title ID, so list those items too.
+        query.titleId?.takeIf { it.isNotBlank() }?.let { tid ->
+            val t = tid.lowercase()
+            for (doc in fetchDocs(tid).take(4)) {
+                if (t !in alnum(doc.identifier) && t !in alnum(doc.title ?: "")) continue
+                addFrom(doc.identifier, doc.title)
+            }
+        }
+        for (doc in search(query).filterNot { isJunkItem(it) }.take(8)) {
+            if (out.size >= MAX_CANDIDATES) break
+            addFrom(doc.identifier, doc.title)
+        }
+
+        out.distinctBy { it.label }
+            .sortedWith(
+                compareBy<DownloadCandidate> { RomMatcher.regionRank(it.label) }
+                    .thenByDescending { it.sizeBytes ?: 0L },
+            )
+            .take(MAX_CANDIDATES)
+    }
+
+    private const val MAX_CANDIDATES = 40
+
     private fun download(identifier: String, filename: String, size: Long?): ResolvedDownload {
         val url = "https://archive.org/download/$identifier/${urlEncodePath(filename)}"
         Log.i(TAG, "Resolved -> $url")
@@ -96,17 +208,13 @@ object InternetArchiveSource : RomSource {
     // checksums, etc.). A file carrying this platform's own extension always wins — so a title-matched
     // item that turns out to be the wrong console's version (its files don't fit the platform) is
     // rejected, not downloaded. Only when no native-extension file exists do we fall back to a generic
-    // archive wrapper (how disc dumps ship). EXCEPT for Switch: there we require a direct
-    // .nsp/.xci/.nsz/.xcz, because IA's Switch "dumps" are routinely unpacked CDN folders (.app files)
-    // or Wii U versions inside a multi-GB archive with no usable ROM — streaming all of it only to
-    // find nothing is far worse than honestly reporting "no source found".
+    // archive wrapper (how disc / Switch / Wii U dumps ship), gated on plausible size.
     private fun pickPayload(files: List<IaFile>, platform: Platform): IaFile? {
         val platformExts = RomMatcher.extensionsFor(platform)
         val real = files.filterNot { isSidecar(it.name) }
         val native = real.filter { extensionOf(it.name) in platformExts }
         val pool = when {
             native.isNotEmpty() -> native
-            platform == Platform.SWITCH -> emptyList()
             else -> real.filter {
                 extensionOf(it.name) in ARCHIVE_EXTENSIONS &&
                     RomMatcher.isPlausibleSize(it.size?.toLongOrNull(), platform)
@@ -121,14 +229,12 @@ object InternetArchiveSource : RomSource {
             .firstOrNull()
     }
 
-    // A file we can actually use: this platform's native ROM extension, or — for non-Switch — an
-    // archive ArchiveExtractor can unwrap. Switch is never an archive here (IA's Switch archives are
-    // routinely unextractable .rar / unpacked CDN folders, and we can't pull an NSP out of those);
-    // requiring a direct .nsp/.xci lets the chain fall through to debrid for the real file.
+    // A file we can actually use: this platform's native ROM extension, or an archive the coordinator
+    // can unwrap (tar/gz/zip/7z/rar). Switch archives are now fair game — the .7z/.rar extractors mean
+    // an IA Switch dump packaged as one no longer has to be passed over for debrid.
     private fun isUsablePayload(filename: String, platform: Platform): Boolean {
         val ext = extensionOf(filename)
         if (ext in RomMatcher.extensionsFor(platform)) return true
-        if (platform == Platform.SWITCH) return false
         return ext in ARCHIVE_EXTENSIONS
     }
 
@@ -178,7 +284,7 @@ object InternetArchiveSource : RomSource {
     // Largest payload that carries the Title ID (so we get the right game, not a DLC/other title in
     // a shared item), falling back to the largest payload overall.
     private fun pickTitleIdPayload(files: List<IaFile>, tid: String): IaFile? {
-        // A direct Switch ROM, or an extractable archive wrapping one — never a .rar/.7z we can't open.
+        // A direct Switch ROM, or an extractable archive wrapping one (tar/gz/zip/7z/rar).
         val switchExts = RomMatcher.extensionsFor(Platform.SWITCH)
         val candidates = files.filter {
             !isSidecar(it.name) &&

@@ -19,6 +19,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // 7-Zip-JBinding-4Android (native RAR5 / 7z engine) is published on JitPack only.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

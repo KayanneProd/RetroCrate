@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kayanne.retrocrate.data.persistence.CatalogFilters
 import com.kayanne.retrocrate.data.persistence.DebridProvider
 import com.kayanne.retrocrate.data.persistence.DebridSettings
 import com.kayanne.retrocrate.data.persistence.DownloadHistoryStore
@@ -31,8 +32,18 @@ class SettingsViewModel : ViewModel() {
 
     val debrid: StateFlow<DebridSettings> = SettingsStore.debrid
 
+    val filters: StateFlow<CatalogFilters> = SettingsStore.filters
+
     fun onSetDebridKey(provider: DebridProvider, key: String) {
         viewModelScope.launch { SettingsStore.setDebridKey(provider, key) }
+    }
+
+    fun onSetEnglishOnly(enabled: Boolean) {
+        viewModelScope.launch { SettingsStore.setEnglishOnly(enabled) }
+    }
+
+    fun onSetHideShovelware(enabled: Boolean) {
+        viewModelScope.launch { SettingsStore.setHideShovelware(enabled) }
     }
 
     fun onFolderPicked(context: Context, platform: Platform, uri: Uri) {

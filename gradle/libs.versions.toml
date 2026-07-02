@@ -25,8 +25,13 @@ kotlinxSerializationJson = "1.9.0"
 # Scraping
 jsoup = "1.21.2"
 
-# Archive extraction (tar / gzip / zip ROM unpacking)
+# Archive extraction (tar / gzip / zip / 7z ROM unpacking)
 commonsCompress = "1.27.1"
+# LZMA/LZMA2 codec — Commons Compress delegates 7z's compression to it (optional dep, required for .7z)
+xz = "1.10"
+# Native 7-Zip engine (JNI) — the only way to decode RAR5, which modern Switch/Wii U releases use.
+# Built on 7-Zip 16.02 (reads RAR4 + RAR5). Routed only for .rar; the codecs above keep handling 7z/zip/tar.
+sevenzipjbinding = "Release-16.02-2.03"
 
 # Imaging
 coil = "3.4.0"
@@ -77,6 +82,8 @@ jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 
 # Archive extraction
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
+xz = { group = "org.tukaani", name = "xz", version.ref = "xz" }
+sevenzipjbinding = { group = "com.github.omicronapps", name = "7-Zip-JBinding-4Android", version.ref = "sevenzipjbinding" }
 
 # Imaging
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }

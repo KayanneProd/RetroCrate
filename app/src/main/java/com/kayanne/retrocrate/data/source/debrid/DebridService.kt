@@ -27,11 +27,22 @@ interface DebridService {
         settings: DebridSettings,
         onProgress: (Float?) -> Unit,
     ): ResolvedDownload?
+
+    // Turn a plain file-host link (1fichier, mega, …) into a direct HTTPS link — the same unrestrict
+    // endpoints the torrent path already uses, just fed a hoster URL instead of a torrent-internal one.
+    // This is the DDL path (a link captured from a site behind its ad-shortener). Null if this service
+    // can't unlock that host or isn't configured.
+    suspend fun unlockHosterLink(url: String, settings: DebridSettings): ResolvedDownload?
 }
 
 // One file inside a torrent. `ref` is provider-specific: a direct URL for Premiumize, the RD file id
 // for Real-Debrid.
 internal data class DebridFile(val name: String, val sizeBytes: Long?, val ref: String)
+
+// Last-resort filename when a debrid unlock doesn't hand one back. The coordinator still prefers the
+// server's Content-Disposition, so this only seeds the temp name.
+internal fun fileNameFromUrl(url: String): String =
+    url.substringBefore('?').substringBefore('#').substringAfterLast('/').ifBlank { "download.bin" }
 
 // Picks the correct file inside a (possibly multi-file) torrent, reusing RomMatcher's platform /
 // title / size guarantees so a multi-game pack can't hand back the wrong game or wrong console. Falls

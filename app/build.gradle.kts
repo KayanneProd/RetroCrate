@@ -26,8 +26,8 @@ android {
         applicationId = "com.kayanne.retrocrate"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -93,8 +93,10 @@ dependencies {
     // Scraping
     implementation(libs.jsoup)
 
-    // Archive extraction (unpack ROMs from .tar.gz / .zip downloads)
+    // Archive extraction (unpack ROMs from .tar.gz / .zip / .7z downloads)
     implementation(libs.commons.compress)
+    implementation(libs.xz) // LZMA/LZMA2 codec for 7z (Vimm's serves disc games as .7z)
+    implementation(libs.sevenzipjbinding) // native 7-Zip engine for .rar (RAR5; Switch/Wii U scene releases)
 
     // Imaging
     implementation(libs.coil.compose)

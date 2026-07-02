@@ -2,6 +2,7 @@ package com.kayanne.retrocrate.data.source.debrid
 
 import android.util.Log
 import com.kayanne.retrocrate.data.persistence.SettingsStore
+import com.kayanne.retrocrate.data.source.DownloadCandidate
 import com.kayanne.retrocrate.data.source.ResolveQuery
 import com.kayanne.retrocrate.data.source.ResolvedDownload
 import com.kayanne.retrocrate.data.source.RomSource
@@ -55,6 +56,29 @@ object DebridRomSource : RomSource {
         return null
     }
 
+    // Each matching torrent as a pickable candidate (most-seeded / best-titled first). Tapping one
+    // unlocks it via the configured debrid service(s) — cached/instant only here; if it isn't cached,
+    // resolve returns null and the user can pick another or use Auto (which fetches non-cached).
+    override suspend fun listCandidates(query: ResolveQuery): List<DownloadCandidate> {
+        val settings = SettingsStore.debrid.value
+        val services = allServices.filter { it.isConfigured(settings) }
+        if (services.isEmpty()) return emptyList()
+        return gatherCandidates(query).map { candidate ->
+            DownloadCandidate(
+                sourceName = siteName,
+                label = candidate.name,
+                region = null,
+                sizeBytes = candidate.sizeBytes,
+                extra = "${candidate.seeders} seeders",
+                resolve = {
+                    services.firstNotNullOfOrNull { service ->
+                        runCatching { service.resolve(candidate, query, settings) }.getOrNull()
+                    }
+                },
+            )
+        }
+    }
+
     // Slow fallback used by DownloadCoordinator only when the fast (cached) chain found nothing:
     // ask a configured debrid service to fetch the best-seeded matching torrent server-side, then
     // resolve the finished file. Reports prep progress so the UI can show "Preparing…".
@@ -79,6 +103,27 @@ object DebridRomSource : RomSource {
                 return resolved
             }
         }
+        return null
+    }
+
+    // Unlock a plain file-host link (captured from a DDL site after its ad-shortener) into a direct
+    // link, trying each configured service. The durable half of the DDL path — reuses the same
+    // unrestrict endpoints as the torrent path.
+    suspend fun unlockHosterLink(url: String): ResolvedDownload? {
+        val settings = SettingsStore.debrid.value
+        val services = allServices.filter { it.isConfigured(settings) }
+        if (services.isEmpty()) return null
+        for (service in services) {
+            val resolved = runCatching { service.unlockHosterLink(url, settings) }.getOrElse {
+                Log.w(TAG, "${service.name} couldn't unlock $url", it)
+                null
+            }
+            if (resolved != null) {
+                Log.i(TAG, "Unlocked DDL link via ${service.name}: $url")
+                return resolved
+            }
+        }
+        Log.i(TAG, "No configured debrid service could unlock $url")
         return null
     }
 

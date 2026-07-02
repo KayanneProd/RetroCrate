@@ -10,8 +10,11 @@ import com.kayanne.retrocrate.domain.model.Platform
 import com.kayanne.retrocrate.domain.model.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToStream
 import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -31,21 +34,28 @@ object TitledbSource {
     // Versioned filename: bump the suffix to invalidate stale caches when the inclusion gate or the
     // cap changes (old file is simply ignored; a fresh refresh rebuilds with the new rules).
     // v2 = broad searchable catalog (publisher/description gate moved to New Arrivals only).
-    private const val CACHE_FILE = "titledb_switch_v2.json"
+    // v3 = uncapped catalog (every English retail base title, not just the 8000 newest — the 8000 cap
+    // dropped pre-~2022 games like Yoshi's Crafted World off the tail).
+    private const val CACHE_FILE = "titledb_switch_v3.json"
     private const val REFRESH_INTERVAL_MS = 24L * 60 * 60 * 1000
-    // The full searchable Switch catalog — every real English retail base title, not just the recent
-    // ones. Generous cap so older games (e.g. a 2019 Layton) are present and findable. The curated
-    // "New Arrivals" rail is a strict, recent subset computed at selection time (isNewArrivalQuality),
-    // so a broad catalog here doesn't put shovelware on Home.
-    private const val MAX_CATALOG_GAMES = 8000
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+    // Outcome of a sync attempt, so the catalog can show the user whether the full Switch library is
+    // present (UP_TO_DATE / UPDATED) or whether we're running on the bundled fallback (FAILED).
+    enum class SyncOutcome { UP_TO_DATE, UPDATED, FAILED }
+
+    fun hasCache(context: Context): Boolean = File(context.filesDir, CACHE_FILE).exists()
+
+    // Stream-decode the cache: the full catalog is tens of MB, so reading it as one big String (then
+    // decoding) risks OutOfMemory on a handheld — the write side hit exactly that. decodeFromStream
+    // parses incrementally off the file, mirroring the JsonReader stream-parse of the source download.
+    @OptIn(ExperimentalSerializationApi::class)
     fun loadCached(context: Context): List<Game> {
         val file = File(context.filesDir, CACHE_FILE)
         if (!file.exists()) return emptyList()
         return runCatching {
-            json.decodeFromString<Cache>(file.readText()).games.map { it.toGame() }
+            file.inputStream().buffered().use { json.decodeFromStream<Cache>(it) }.games.map { it.toGame() }
         }.getOrElse {
             Log.w(TAG, "Failed to read titledb cache", it)
             emptyList()
@@ -61,17 +71,21 @@ object TitledbSource {
             !isReReleaseLine(game.title) &&
             !isSwitch2Edition(game.title)
 
-    // Returns true if the cache was refreshed (caller should reload the Switch catalog).
-    suspend fun refreshIfStale(context: Context): Boolean = withContext(Dispatchers.IO) {
+    // Fetches the live Switch catalog if it's missing or stale. UP_TO_DATE = cache already current
+    // (no network); UPDATED = cache rewritten (caller should reload the Switch catalog); FAILED = the
+    // download/parse failed (caller keeps whatever cache it has, or the bundled fallback). `force`
+    // bypasses the freshness gate for an explicit user-driven retry.
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun sync(context: Context, force: Boolean = false): SyncOutcome = withContext(Dispatchers.IO) {
         val file = File(context.filesDir, CACHE_FILE)
         val fresh = file.exists() && (System.currentTimeMillis() - file.lastModified() < REFRESH_INTERVAL_MS)
-        if (fresh) return@withContext false
+        if (fresh && !force) return@withContext SyncOutcome.UP_TO_DATE
 
         val entries = runCatching { downloadAndParse() }.getOrElse {
-            Log.w(TAG, "titledb refresh failed", it)
-            emptyList()
+            Log.w(TAG, "titledb sync failed", it)
+            return@withContext SyncOutcome.FAILED
         }
-        if (entries.isEmpty()) return@withContext false
+        if (entries.isEmpty()) return@withContext SyncOutcome.FAILED
 
         // Drop announced-but-unreleased titles (titledb carries future release dates) — a game the
         // user can't download yet shouldn't lead "New Arrivals". Then collapse the per-language SKUs
@@ -82,12 +96,20 @@ object TitledbSource {
             .filter { (it.releaseDate ?: 0) <= today }
             .sortedByDescending { it.releaseDate ?: 0 }
             .distinctBy { it.name.lowercase().replace(Regex("[^a-z0-9]+"), "") }
-            .take(MAX_CATALOG_GAMES)
+        // Stream the JSON straight to the file. encodeToString builds the entire ~50 MB document as
+        // one growing in-memory char array first, which OOMs on a handheld with 18k games — caught
+        // on-device. encodeToStream writes incrementally with no giant intermediate String.
         runCatching {
-            file.writeText(json.encodeToString(Cache(games = newest)))
-        }.onFailure { Log.w(TAG, "Failed to write titledb cache", it) }
+            file.outputStream().buffered().use { out ->
+                json.encodeToStream(Cache(games = newest), out)
+            }
+        }.onFailure {
+            Log.w(TAG, "Failed to write titledb cache", it)
+            runCatching { file.delete() }
+            return@withContext SyncOutcome.FAILED
+        }
         Log.i(TAG, "Refreshed titledb cache: ${newest.size} Switch games")
-        true
+        SyncOutcome.UPDATED
     }
 
     private fun downloadAndParse(): List<Entry> {
@@ -260,7 +282,7 @@ private val NOTABLE_PUBLISHERS = setOf(
     "wb games", "outright games", "namco", "koei", "atari", "g-mode", "d3 publisher", "spike",
 )
 
-private fun isNotablePublisher(publisher: String?): Boolean {
+internal fun isNotablePublisher(publisher: String?): Boolean {
     if (publisher.isNullOrBlank()) return false
     val p = publisher.lowercase()
     return NOTABLE_PUBLISHERS.any { p.contains(it) }

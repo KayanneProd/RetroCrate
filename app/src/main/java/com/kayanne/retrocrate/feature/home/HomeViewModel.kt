@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kayanne.retrocrate.data.repository.GameCatalogRepository
 import com.kayanne.retrocrate.data.repository.LoadStatus
+import com.kayanne.retrocrate.data.repository.SwitchSyncState
 import com.kayanne.retrocrate.domain.model.Game
 import com.kayanne.retrocrate.domain.model.GameCollection
 import com.kayanne.retrocrate.domain.model.Platform
@@ -39,7 +40,8 @@ class HomeViewModel : ViewModel() {
         rails,
         browse,
         repository.observeCollections(),
-    ) { status, rails, (genres, platforms), collections ->
+        repository.switchSync,
+    ) { status, rails, (genres, platforms), collections, switchSync ->
         HomeUiState(
             status = status,
             featured = rails.featured,
@@ -49,6 +51,7 @@ class HomeViewModel : ViewModel() {
             genres = genres,
             platforms = platforms,
             collections = collections.take(COLLECTION_RAIL_COUNT),
+            switchSync = switchSync,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -84,4 +87,5 @@ data class HomeUiState(
     val genres: List<String> = emptyList(),
     val platforms: List<Platform> = emptyList(),
     val collections: List<GameCollection> = emptyList(),
+    val switchSync: SwitchSyncState = SwitchSyncState.Idle,
 )

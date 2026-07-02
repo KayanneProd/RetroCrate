@@ -28,6 +28,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.PlayCircle
@@ -85,6 +87,8 @@ fun GameDetailScreen(
     viewModel: GameDetailViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val picker by viewModel.picker.collectAsStateWithLifecycle()
+    val isWishlisted by viewModel.isWishlisted.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -105,7 +109,7 @@ fun GameDetailScreen(
                 val game = (uiState as? GameDetailUiState.Loaded)?.game
                 if (game != null) {
                     SettingsStore.setPlatformFolder(game.platform, uri.toString())
-                    viewModel.onInstall(context)
+                    viewModel.onDownloadClicked()
                 }
             }
         }
@@ -135,6 +139,15 @@ fun GameDetailScreen(
                     }
                 },
                 actions = {
+                    if (uiState is GameDetailUiState.Loaded) {
+                        IconButton(onClick = viewModel::onToggleWishlist) {
+                            Icon(
+                                imageVector = if (isWishlisted) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                                contentDescription = if (isWishlisted) "Remove from Library" else "Add to Library",
+                                tint = if (isWishlisted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
                     IconButton(onClick = onOpenDownloads) {
                         Icon(Icons.Outlined.Download, contentDescription = "Downloads")
                     }
@@ -178,13 +191,30 @@ fun GameDetailScreen(
                             if (storedUri.isNullOrBlank()) {
                                 folderPicker.launch(null)
                             } else {
-                                viewModel.onInstall(context)
+                                viewModel.onDownloadClicked()
                             }
                         }
                     },
                 )
             }
         }
+    }
+
+    DownloadSourceSheet(
+        state = picker,
+        onAuto = { viewModel.onAuto(context) },
+        onSourceSelected = viewModel::onSourceSelected,
+        onCandidateSelected = { viewModel.onCandidateSelected(it, context) },
+        onBack = viewModel::onBackToSources,
+        onDismiss = viewModel::onDismissPicker,
+    )
+
+    (picker as? DownloadPicker.Unlock)?.let { unlock ->
+        LinkUnlockDialog(
+            shortenerUrl = unlock.shortenerUrl,
+            onCaptured = { url -> viewModel.onHosterCaptured(url, context) },
+            onDismiss = viewModel::onUnlockCancelled,
+        )
     }
 
     val loaded = uiState as? GameDetailUiState.Loaded

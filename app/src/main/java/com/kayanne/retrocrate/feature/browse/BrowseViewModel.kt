@@ -23,16 +23,14 @@ class BrowseViewModel(
     private val repository = GameCatalogRepository
     private val route = savedStateHandle.toRoute<BrowseRoute>()
 
-    val uiState: StateFlow<BrowseUiState> = repository.catalog
+    val uiState: StateFlow<BrowseUiState> = repository.filteredCatalog
         .map { games ->
             when (route.kind) {
                 "new" -> BrowseUiState(
                     title = route.value,
-                    // Full newest list (no per-platform cap, unlike the Home rail) so the user can
-                    // scroll through every recent release, newest first by actual date.
-                    games = games
-                        .sortedByDescending { it.releaseDate ?: (it.releaseYear?.times(10000) ?: Int.MIN_VALUE) }
-                        .take(NEW_LIMIT),
+                    // Same "New Arrivals" definition as the Home rail (shared so they can't diverge),
+                    // just a deeper list — newest first, Switch shovelware gated out.
+                    games = repository.newArrivalsFrom(games, NEW_LIMIT),
                 )
                 "genre" -> BrowseUiState(
                     title = route.value,

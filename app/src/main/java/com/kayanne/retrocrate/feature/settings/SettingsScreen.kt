@@ -3,6 +3,7 @@ package com.kayanne.retrocrate.feature.settings
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +25,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
@@ -40,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kayanne.retrocrate.core.designsystem.Spacing
+import com.kayanne.retrocrate.data.persistence.CatalogFilters
 import com.kayanne.retrocrate.data.persistence.DebridProvider
 import com.kayanne.retrocrate.data.persistence.DebridSettings
 import com.kayanne.retrocrate.domain.model.Platform
@@ -51,6 +56,7 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val debrid by viewModel.debrid.collectAsStateWithLifecycle()
+    val filters by viewModel.filters.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Shared SAF launcher; tracks which platform we're picking for so the callback can route.
@@ -92,6 +98,21 @@ fun SettingsScreen(
                         folderPicker.launch(null)
                     },
                     onClear = { viewModel.onClearPlatformFolder(row.platform) },
+                )
+            }
+            item("filters") {
+                Spacer(Modifier.height(Spacing.l))
+                SectionLabel("Catalog filters")
+                Text(
+                    text = "Trim what shows up in search and browse.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = Spacing.s),
+                )
+                CatalogFiltersCard(
+                    filters = filters,
+                    onEnglishOnlyChange = viewModel::onSetEnglishOnly,
+                    onHideShovelwareChange = viewModel::onSetHideShovelware,
                 )
             }
             item("debrid") {
@@ -173,6 +194,74 @@ private fun PlatformFolderCard(
                 Text(if (row.uri == null) "Pick" else "Change")
             }
         }
+    }
+}
+
+@Composable
+private fun CatalogFiltersCard(
+    filters: CatalogFilters,
+    onEnglishOnlyChange: (Boolean) -> Unit,
+    onHideShovelwareChange: (Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.m, vertical = Spacing.xs)) {
+            FilterToggleRow(
+                title = "English / USA only",
+                subtitle = "Hide Japanese, European-language and other regional duplicates.",
+                checked = filters.englishOnly,
+                onCheckedChange = onEnglishOnlyChange,
+            )
+            FilterToggleRow(
+                title = "Hide shovelware",
+                subtitle = "Drop low-effort Switch eShop filler from unknown publishers.",
+                checked = filters.hideShovelware,
+                onCheckedChange = onHideShovelwareChange,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilterToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = Spacing.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        Spacer(Modifier.width(Spacing.m))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
     }
 }
 

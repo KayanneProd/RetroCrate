@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
@@ -26,6 +27,14 @@ data class DebridSettings(
 
 enum class DebridProvider { PREMIUMIZE, REAL_DEBRID }
 
+// Catalog visibility toggles. The user speaks only English and doesn't want shovelware cluttering
+// search/browse — both default ON. Applied as a runtime filter over the catalog (GameCatalogRepository),
+// so toggling takes effect live without rebuilding anything.
+data class CatalogFilters(
+    val englishOnly: Boolean = true,
+    val hideShovelware: Boolean = true,
+)
+
 // Persists one SAF DocumentTree URI per Platform. N64 ROMs go to the user's N64 folder,
 // SNES to SNES, etc. — no shared bucket. Also holds optional debrid API keys.
 object SettingsStore {
@@ -38,8 +47,13 @@ object SettingsStore {
     private val _debrid = MutableStateFlow(DebridSettings())
     val debrid: StateFlow<DebridSettings> = _debrid.asStateFlow()
 
+    private val _filters = MutableStateFlow(CatalogFilters())
+    val filters: StateFlow<CatalogFilters> = _filters.asStateFlow()
+
     private val premiumizeKey = stringPreferencesKey("debrid_premiumize")
     private val realDebridKey = stringPreferencesKey("debrid_realdebrid")
+    private val englishOnlyKey = booleanPreferencesKey("filter_english_only")
+    private val hideShovelwareKey = booleanPreferencesKey("filter_hide_shovelware")
 
     fun initialize(context: Context) {
         if (::dataStore.isInitialized) return
@@ -61,6 +75,22 @@ object SettingsStore {
             premiumizeApiKey = prefs[premiumizeKey]?.takeIf { it.isNotBlank() },
             realDebridApiKey = prefs[realDebridKey]?.takeIf { it.isNotBlank() },
         )
+        _filters.value = CatalogFilters(
+            englishOnly = prefs[englishOnlyKey] ?: true,
+            hideShovelware = prefs[hideShovelwareKey] ?: true,
+        )
+    }
+
+    suspend fun setEnglishOnly(enabled: Boolean) {
+        if (!::dataStore.isInitialized) return
+        dataStore.edit { it[englishOnlyKey] = enabled }
+        _filters.value = _filters.value.copy(englishOnly = enabled)
+    }
+
+    suspend fun setHideShovelware(enabled: Boolean) {
+        if (!::dataStore.isInitialized) return
+        dataStore.edit { it[hideShovelwareKey] = enabled }
+        _filters.value = _filters.value.copy(hideShovelware = enabled)
     }
 
     suspend fun setDebridKey(provider: DebridProvider, key: String?) {

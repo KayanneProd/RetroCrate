@@ -2,11 +2,20 @@ package com.kayanne.retrocrate.data.source.vimms
 
 import android.util.Log
 import com.kayanne.retrocrate.data.network.HttpClient
+import com.kayanne.retrocrate.data.source.DownloadCandidate
+import com.kayanne.retrocrate.data.source.LibretroThumbnails
 import com.kayanne.retrocrate.data.source.ResolveQuery
 import com.kayanne.retrocrate.data.source.ResolvedDownload
 import com.kayanne.retrocrate.data.source.RomMatcher
 import com.kayanne.retrocrate.data.source.RomSource
+import com.kayanne.retrocrate.data.source.TitleSearch
+import com.kayanne.retrocrate.domain.model.Game
+import com.kayanne.retrocrate.domain.model.Platform
+import com.kayanne.retrocrate.domain.model.Source
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.jsoup.Jsoup
@@ -24,36 +33,114 @@ object VimmsDownloadSource : RomSource {
     override val siteName: String = "Vimm's Lair"
 
     override suspend fun resolve(query: ResolveQuery): ResolvedDownload? = withContext(Dispatchers.IO) {
-        val section = sectionFor(query.title)
-        val listingUrl = VimmsPaths.vaultUrlForSection(query.platform, section) ?: return@withContext null
+        val entries = matchingEntries(query)
+        val entry = entries.minByOrNull { regionRank(it.region) } ?: run {
+            Log.w(TAG, "No vault entry matched \"${query.title}\"")
+            return@withContext null
+        }
+        resolveEntry(entry, query)
+    }
 
+    // Every vault entry that matches the title (often several regions), each a pickable candidate.
+    override suspend fun listCandidates(query: ResolveQuery): List<DownloadCandidate> = withContext(Dispatchers.IO) {
+        matchingEntries(query)
+            .sortedBy { regionRank(it.region) }
+            .map { entry ->
+                DownloadCandidate(
+                    sourceName = siteName,
+                    label = entry.title,
+                    region = entry.region,
+                    sizeBytes = null,
+                    extra = entry.year?.toString(),
+                    resolve = { resolveEntry(entry, query) },
+                )
+            }
+    }
+
+    // Live "search beyond the catalog": query the Vimm's vault for titles matching free text and
+    // return them as downloadable Games. A query hits one alphabetical section page per platform
+    // (the section is fixed by the query's first letter), fanned out across the platforms Vimm's
+    // vaults; the per-host rate limiter keeps that polite. Box art is the libretro cover for the
+    // No-Intro title (Vimm's files article-last, which is exactly libretro's filename form).
+    override suspend fun searchTitles(query: String, platform: Platform?): List<Game> {
+        if (query.isBlank()) return emptyList()
+        val platforms = when {
+            platform != null -> if (VimmsPaths.vaults(platform)) listOf(platform) else emptyList()
+            else -> Platform.entries.filter { VimmsPaths.vaults(it) }
+        }
+        if (platforms.isEmpty()) return emptyList()
+        return coroutineScope {
+            platforms
+                .map { p -> async(Dispatchers.IO) { searchPlatform(query, p) } }
+                .awaitAll()
+                .flatten()
+        }
+    }
+
+    private fun searchPlatform(query: String, platform: Platform): List<Game> {
+        val section = sectionFor(query)
+        val url = VimmsPaths.vaultUrlForSection(platform, section) ?: return emptyList()
+        val entries = runCatching {
+            fetchHtml(url)?.let { VimmsParser.parseVaultListing(it) }
+        }.getOrNull().orEmpty()
+        return entries
+            .asSequence()
+            .filter { TitleSearch.score(query, it.title) > 0.0 }
+            .distinctBy { it.vimmsId }
+            .map { it.toGame(platform) }
+            .toList()
+    }
+
+    private fun VimmsVaultEntry.toGame(platform: Platform): Game {
+        val slug = TitleSearch.normalize(title).replace(' ', '-').ifBlank { vimmsId }
+        return Game(
+            id = "vimms:${platform.name.lowercase()}:$slug",
+            title = title,
+            platform = platform,
+            releaseYear = year,
+            releaseDate = year?.times(10000),
+            boxArtUrl = LibretroThumbnails.boxArtUrl(platform, title, artRegion(region)),
+            sources = listOf(
+                Source(
+                    id = "vimms:$vimmsId",
+                    siteName = siteName,
+                    region = region,
+                    sizeBytes = null,
+                    resolveUrl = "",
+                ),
+            ),
+        )
+    }
+
+    private fun artRegion(region: String?): String = when (region?.lowercase()) {
+        "europe" -> "Europe"
+        "japan" -> "Japan"
+        else -> "USA"
+    }
+
+    private fun matchingEntries(query: ResolveQuery): List<VimmsVaultEntry> {
+        val section = sectionFor(query.title)
+        val listingUrl = VimmsPaths.vaultUrlForSection(query.platform, section) ?: return emptyList()
         val entries = runCatching {
             fetchHtml(listingUrl)?.let { VimmsParser.parseVaultListing(it) }
         }.getOrNull().orEmpty()
         if (entries.isEmpty()) {
             Log.w(TAG, "No vault entries parsed for \"${query.title}\" at $listingUrl (parser drift?)")
-            return@withContext null
+            return emptyList()
         }
+        return entries.filter { RomMatcher.titlesMatch(it.title, query.title) }
+    }
 
-        val entry = entries
-            .filter { RomMatcher.titlesMatch(it.title, query.title) }
-            .minByOrNull { regionRank(it.region) }
-            ?: run {
-                Log.w(TAG, "No vault entry matched \"${query.title}\" among ${entries.size} in section $section")
-                return@withContext null
-            }
-
+    private fun resolveEntry(entry: VimmsVaultEntry, query: ResolveQuery): ResolvedDownload? {
         val pageUrl = VimmsPaths.gameDetailUrl(entry.vimmsId)
-        val pageHtml = runCatching { fetchHtml(pageUrl) }.getOrNull() ?: return@withContext null
+        val pageHtml = runCatching { fetchHtml(pageUrl) }.getOrNull() ?: return null
         val form = parseDownloadForm(pageHtml, entry.vimmsId) ?: run {
-            Log.w(TAG, "No parseable download form for \"${query.title}\" (vault ${entry.vimmsId})")
-            return@withContext null
+            Log.w(TAG, "No parseable download form for \"${entry.title}\" (vault ${entry.vimmsId})")
+            return null
         }
-
-        val filename = (query.romFileName?.substringBeforeLast('.') ?: query.title)
+        val filename = (query.romFileName?.substringBeforeLast('.') ?: entry.title)
             .replace(Regex("[\\\\/:*?\"<>|]"), "_") + ".zip"
-
-        ResolvedDownload(
+        return ResolvedDownload(
             siteName = siteName,
             filename = filename,
             downloadUrl = form.downloadUrl,
