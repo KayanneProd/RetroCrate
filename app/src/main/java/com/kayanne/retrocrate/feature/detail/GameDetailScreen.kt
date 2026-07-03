@@ -195,6 +195,7 @@ fun GameDetailScreen(
                             }
                         }
                     },
+                    onStop = viewModel::onCancelDownload,
                 )
             }
         }
@@ -205,7 +206,10 @@ fun GameDetailScreen(
         onAuto = { viewModel.onAuto(context) },
         onSourceSelected = viewModel::onSourceSelected,
         onCandidateSelected = { viewModel.onCandidateSelected(it, context) },
+        onNxbrewGameSelected = viewModel::onNxbrewGameSelected,
+        onNxbrewFileSelected = viewModel::onNxbrewFileSelected,
         onBack = viewModel::onBackToSources,
+        onBackFromFiles = viewModel::onBackFromNxbrewFiles,
         onDismiss = viewModel::onDismissPicker,
     )
 
@@ -245,6 +249,7 @@ private fun SplitDetailContent(
     onOpenUrl: (String) -> Unit,
     onScreenshotClick: (Int) -> Unit,
     onInstallClick: () -> Unit,
+    onStop: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxSize()) {
         ArtPanel(
@@ -262,6 +267,7 @@ private fun SplitDetailContent(
             onOpenUrl = onOpenUrl,
             onScreenshotClick = onScreenshotClick,
             onInstallClick = onInstallClick,
+            onStop = onStop,
             modifier = Modifier
                 .weight(0.55f)
                 .fillMaxHeight()
@@ -319,6 +325,7 @@ private fun InfoPanel(
     onOpenUrl: (String) -> Unit,
     onScreenshotClick: (Int) -> Unit,
     onInstallClick: () -> Unit,
+    onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -373,12 +380,12 @@ private fun InfoPanel(
             }
         }
         Spacer(Modifier.height(Spacing.m))
-        InstallButton(downloadState = downloadState, onClick = onInstallClick)
+        InstallButton(downloadState = downloadState, onClick = onInstallClick, onStop = onStop)
     }
 }
 
 @Composable
-private fun InstallButton(downloadState: DownloadState, onClick: () -> Unit) {
+private fun InstallButton(downloadState: DownloadState, onClick: () -> Unit, onStop: () -> Unit) {
     val (label, enabled) = when (downloadState) {
         DownloadState.NotStarted -> "Install" to true
         is DownloadState.Queued -> "Queued…" to false
@@ -432,27 +439,47 @@ private fun InstallButton(downloadState: DownloadState, onClick: () -> Unit) {
                 )
             }
         }
-        Button(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (downloadState is DownloadState.Completed) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.secondary
-                },
-                contentColor = MaterialTheme.colorScheme.onSecondary,
-            ),
-            shape = RoundedCornerShape(8.dp),
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
+        val isActive = downloadState is DownloadState.Queued ||
+            downloadState is DownloadState.Preparing ||
+            downloadState is DownloadState.InProgress
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = onClick,
+                enabled = enabled,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (downloadState is DownloadState.Completed) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.secondary
+                    },
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                ),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            if (isActive) {
+                Spacer(Modifier.width(Spacing.s))
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(
+                        text = "Stop",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
         }
     }
 }

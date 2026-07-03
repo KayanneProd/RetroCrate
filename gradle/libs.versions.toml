@@ -17,6 +17,10 @@ navigationCompose = "2.9.6"
 datastore = "1.1.7"
 documentfile = "1.1.0"
 
+# WebView (androidx.webkit) — document-start script injection to neuter the fingerprinting APIs that
+# crash the WebView on ad-shortener pages (NXBrew DDL unlock flow).
+webkit = "1.15.0"
+
 # Network
 retrofit = "3.0.0"
 okhttp = "5.3.0"
@@ -69,6 +73,7 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 # DataStore
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 
 # Network
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }

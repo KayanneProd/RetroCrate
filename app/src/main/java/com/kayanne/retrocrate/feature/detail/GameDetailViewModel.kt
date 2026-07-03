@@ -14,6 +14,9 @@ import com.kayanne.retrocrate.data.repository.LoadStatus
 import com.kayanne.retrocrate.data.source.DownloadCandidate
 import com.kayanne.retrocrate.data.source.LibretroThumbnails
 import com.kayanne.retrocrate.data.source.RomSource
+import com.kayanne.retrocrate.data.source.ddl.NxbrewFile
+import com.kayanne.retrocrate.data.source.ddl.NxbrewGame
+import com.kayanne.retrocrate.data.source.ddl.NxbrewSection
 import com.kayanne.retrocrate.data.source.ddl.NxbrewSource
 import com.kayanne.retrocrate.data.source.debrid.DebridRomSource
 import com.kayanne.retrocrate.data.source.ia.InternetArchiveSource
@@ -68,6 +71,8 @@ class GameDetailViewModel(
     private val _picker = MutableStateFlow<DownloadPicker>(DownloadPicker.Hidden)
     val picker: StateFlow<DownloadPicker> = _picker.asStateFlow()
     private var pickerJob: Job? = null
+    private var lastNxbrewGames: List<NxbrewGame> = emptyList()
+    private var pendingSubfolder: String? = null
 
     val isWishlisted: StateFlow<Boolean> = LibraryStore.wishlist
         .map { gameId in it }
@@ -97,7 +102,22 @@ class GameDetailViewModel(
 
     fun onDownloadClicked() {
         val game = loadedGame() ?: return
-        _picker.value = DownloadPicker.Sources(availableSources(game).map { it.first })
+        _picker.value = DownloadPicker.Sources(availableSources(game).map { it.first }, sourcesHint(game))
+    }
+
+    // A gentle nudge when a Switch game has no strong in-app source because debrid isn't set up — the
+    // NXBrew/Debrid paths need a key to unlock, so without one only Internet Archive (sparse for Switch)
+    // is offered. Points the user at Settings rather than leaving them with a silent dead end.
+    private fun sourcesHint(game: Game): String? =
+        if (game.platform == Platform.SWITCH && !SettingsStore.debrid.value.anyConfigured) {
+            "Add a Premiumize or Real-Debrid key in Settings to unlock NXBrew (updates & DLC too) for Switch games."
+        } else {
+            null
+        }
+
+    // Stop the in-flight download for this game (from the detail screen's progress button).
+    fun onCancelDownload() {
+        DownloadCoordinator.cancel(gameId)
     }
 
     // "Auto (best match)" — the original behaviour: resolve the best source via the chain.
@@ -110,6 +130,11 @@ class GameDetailViewModel(
     fun onSourceSelected(sourceName: String) {
         val game = loadedGame() ?: return
         val source = availableSources(game).firstOrNull { it.first == sourceName }?.second ?: return
+        // NXBrew has its own two-step flow (disambiguate the game, then Base/Update/DLC links).
+        if (source == NxbrewSource) {
+            startNxbrewSearch(game)
+            return
+        }
         pickerJob?.cancel()
         _picker.value = DownloadPicker.Loading(sourceName)
         pickerJob = viewModelScope.launch {
@@ -124,14 +149,62 @@ class GameDetailViewModel(
         }
     }
 
+    // NXBrew: search for the game. One unambiguous confident hit skips straight to its files; anything
+    // ambiguous (a sequel/edition also matched, or nothing matched confidently) shows the game list so
+    // the user picks the right one — the fix for "asked for Kill It With Fire, got Kill It With Fire 2".
+    private fun startNxbrewSearch(game: Game) {
+        pickerJob?.cancel()
+        _picker.value = DownloadPicker.Loading(NxbrewSource.siteName)
+        pickerJob = viewModelScope.launch {
+            val games = withTimeoutOrNull(SOURCE_LIST_TIMEOUT_MS) {
+                runCatching { NxbrewSource.searchGames(game.title) }.getOrDefault(emptyList())
+            }.orEmpty()
+            lastNxbrewGames = games
+            val confident = games.filter { it.confident }
+            when {
+                games.isEmpty() -> _picker.value = DownloadPicker.Empty(NxbrewSource.siteName)
+                confident.size == 1 && games.size == 1 -> loadNxbrewFiles(confident.first())
+                else -> _picker.value = DownloadPicker.NxbrewGames(games)
+            }
+        }
+    }
+
+    fun onNxbrewGameSelected(nxGame: NxbrewGame) {
+        pickerJob?.cancel()
+        loadNxbrewFiles(nxGame)
+    }
+
+    private fun loadNxbrewFiles(nxGame: NxbrewGame) {
+        _picker.value = DownloadPicker.Loading(NxbrewSource.siteName)
+        pickerJob = viewModelScope.launch {
+            val files = withTimeoutOrNull(SOURCE_LIST_TIMEOUT_MS) {
+                runCatching { NxbrewSource.loadFiles(nxGame.pageUrl) }.getOrDefault(emptyList())
+            }.orEmpty()
+            _picker.value = if (files.isEmpty()) {
+                DownloadPicker.Empty(NxbrewSource.siteName)
+            } else {
+                DownloadPicker.NxbrewFiles(nxGame, files)
+            }
+        }
+    }
+
+    // A specific NXBrew Base/Update/DLC link — remember where it should land (updates/DLC get their own
+    // folders), then hand off to the WebView ad-gate (its href is a shortener).
+    fun onNxbrewFileSelected(file: NxbrewFile) {
+        pendingSubfolder = subfolderForSection(file.section)
+        _picker.value = DownloadPicker.Unlock(file.ouoUrl)
+    }
+
+    // Switch updates and DLC install from their own locations, not mixed in with base ROMs, so route
+    // them into subfolders of the platform's download tree. Base games stay at the root.
+    private fun subfolderForSection(section: NxbrewSection): String? = when (section) {
+        NxbrewSection.BASE -> null
+        NxbrewSection.UPDATE -> "Updates"
+        NxbrewSection.DLC -> "DLC"
+    }
+
     fun onCandidateSelected(candidate: DownloadCandidate, context: Context) {
         val game = loadedGame() ?: return
-        // A DDL candidate's file sits behind an ad-shortener — hand off to the WebView unlock step
-        // instead of downloading directly.
-        candidate.unlockUrl?.let { url ->
-            _picker.value = DownloadPicker.Unlock(url)
-            return
-        }
         DownloadCoordinator.startDownload(game, candidate, context)
         _picker.value = DownloadPicker.Hidden
     }
@@ -140,7 +213,8 @@ class GameDetailViewModel(
     // debrid and download (handled inside the coordinator, shown as "Unlocking link…" then progress).
     fun onHosterCaptured(hosterUrl: String, context: Context) {
         val game = loadedGame() ?: return
-        DownloadCoordinator.startDownloadFromLink(game, hosterUrl, context)
+        DownloadCoordinator.startDownloadFromLink(game, hosterUrl, context, pendingSubfolder)
+        pendingSubfolder = null
         _picker.value = DownloadPicker.Hidden
     }
 
@@ -151,7 +225,20 @@ class GameDetailViewModel(
     fun onBackToSources() {
         val game = loadedGame() ?: return
         pickerJob?.cancel()
-        _picker.value = DownloadPicker.Sources(availableSources(game).map { it.first })
+        _picker.value = DownloadPicker.Sources(availableSources(game).map { it.first }, sourcesHint(game))
+    }
+
+    // Back from an NXBrew game's files: return to the game list if the user disambiguated to get here,
+    // otherwise to the source list (the single-confident-hit fast path skipped the game list).
+    fun onBackFromNxbrewFiles() {
+        pickerJob?.cancel()
+        val games = lastNxbrewGames
+        _picker.value = if (games.size > 1) DownloadPicker.NxbrewGames(games) else sourcesPicker()
+    }
+
+    private fun sourcesPicker(): DownloadPicker {
+        val game = loadedGame() ?: return DownloadPicker.Hidden
+        return DownloadPicker.Sources(availableSources(game).map { it.first }, sourcesHint(game))
     }
 
     fun onDismissPicker() {
@@ -181,10 +268,15 @@ private const val SOURCE_LIST_TIMEOUT_MS = 45_000L
 // State of the "choose where to download from" sheet.
 sealed interface DownloadPicker {
     data object Hidden : DownloadPicker
-    data class Sources(val sources: List<String>) : DownloadPicker
+    // [hint] surfaces a gentle nudge (e.g. non-debrid Switch users only see Internet Archive).
+    data class Sources(val sources: List<String>, val hint: String? = null) : DownloadPicker
     data class Loading(val source: String) : DownloadPicker
     data class Candidates(val source: String, val items: List<DownloadCandidate>) : DownloadPicker
     data class Empty(val source: String) : DownloadPicker
+    // NXBrew disambiguation: pick which game (base vs. sequel vs. edition) before its download links.
+    data class NxbrewGames(val games: List<NxbrewGame>) : DownloadPicker
+    // NXBrew game chosen: its Base / Update / DLC download links, grouped by section.
+    data class NxbrewFiles(val game: NxbrewGame, val files: List<NxbrewFile>) : DownloadPicker
     // A DDL pick whose file is behind an ad-shortener: the UI shows a WebView on this URL for one
     // human tap, then captures the file-host link it redirects to.
     data class Unlock(val shortenerUrl: String) : DownloadPicker

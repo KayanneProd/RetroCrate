@@ -14,12 +14,14 @@ import com.kayanne.retrocrate.domain.model.DownloadState
 import com.kayanne.retrocrate.domain.model.Game
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import com.kayanne.retrocrate.domain.model.Platform
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import net.sf.sevenzipjbinding.ExtractOperationResult
@@ -33,6 +35,8 @@ import java.io.IOException
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 // Singleton download orchestrator. Lives outside the activity / ViewModel lifecycle so
@@ -65,8 +69,28 @@ object DownloadCoordinator {
 
     data class DownloadInfo(val filename: String, val totalBytes: Long?)
 
+    // Per-game handles so a download can be stopped: the coroutine (cancels the resolve/suspend work)
+    // and the in-flight OkHttp call (cancels the blocking transfer read, which a coroutine cancel alone
+    // can't interrupt). `cancelling` marks a stop in progress so the coroutine's own error/progress
+    // updates are suppressed and the cancel sets the final state.
+    private val jobs = ConcurrentHashMap<String, Job>()
+    private val calls = ConcurrentHashMap<String, Call>()
+    private val cancelling = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
     fun stateFor(gameId: String): DownloadState =
         _downloads.value[gameId] ?: DownloadState.NotStarted
+
+    // Stop an active download: interrupt the transfer + resolve, drop it from the active list (so the UI
+    // shows Install again), and let the coroutine's finally clean up any partial file / temp archive.
+    fun cancel(gameId: String) {
+        if (_downloads.value[gameId] == null) return
+        Log.i(TAG, "Cancelling download $gameId")
+        cancelling.add(gameId)
+        runCatching { calls.remove(gameId)?.cancel() }
+        jobs.remove(gameId)?.cancel()
+        _downloads.value = _downloads.value - gameId
+        _info.value = _info.value - gameId
+    }
 
     // Auto: resolve the best source via the chain (with the debrid non-cached fallback).
     fun startDownload(game: Game, context: Context) = start(game, context, candidate = null)
@@ -76,32 +100,63 @@ object DownloadCoordinator {
         start(game, context, candidate)
 
     // DDL path: a file-host link captured from a site (after its ad-shortener) — unlock it via debrid,
-    // then download + extract like anything else.
-    fun startDownloadFromLink(game: Game, hosterUrl: String, context: Context) =
-        start(game, context, candidate = null, hosterLink = hosterUrl)
+    // then download + extract like anything else. [subfolder] routes updates/DLC into their own folder
+    // under the platform tree (base games pass null and land at the root).
+    fun startDownloadFromLink(game: Game, hosterUrl: String, context: Context, subfolder: String? = null) =
+        start(game, context, candidate = null, hosterLink = hosterUrl, subfolder = subfolder)
 
-    private fun start(game: Game, context: Context, candidate: DownloadCandidate?, hosterLink: String? = null) {
+    private fun start(
+        game: Game,
+        context: Context,
+        candidate: DownloadCandidate?,
+        hosterLink: String? = null,
+        subfolder: String? = null,
+    ) {
         val current = _downloads.value[game.id]
         if (current is DownloadState.InProgress || current is DownloadState.Queued) {
             Log.i(TAG, "Already downloading ${game.title}; ignoring duplicate request.")
             return
         }
         val appContext = context.applicationContext
+        cancelling.remove(game.id) // fresh start clears any stale stop flag from a prior cancel
         update(game.id, DownloadState.Queued(position = 0))
         // Start the foreground service while we're still in the foreground (user just tapped
         // Install) so the download survives the screen turning off or the app being backgrounded.
         DownloadService.start(appContext)
-        scope.launch {
+        val job = scope.launch {
             try {
-                runDownload(game, appContext, candidate, hosterLink)
+                runDownload(game, appContext, candidate, hosterLink, subfolder)
             } catch (t: Throwable) {
-                Log.w(TAG, "Download failed for ${game.title}", t)
-                update(game.id, DownloadState.Failed(t.message ?: "Download failed"))
+                if (game.id in cancelling) {
+                    Log.i(TAG, "Download stopped for ${game.title}")
+                } else {
+                    Log.w(TAG, "Download failed for ${game.title}", t)
+                    update(game.id, DownloadState.Failed(t.message ?: "Download failed"))
+                }
+            } finally {
+                jobs.remove(game.id)
+                calls.remove(game.id)
+            }
+            // One place to fire the terminal notification: the user may have walked away (screen off,
+            // another game), so tell them here rather than relying on an in-app snackbar.
+            when (val terminal = _downloads.value[game.id]) {
+                is DownloadState.Completed ->
+                    DownloadNotifier.notifyComplete(appContext, game, _info.value[game.id]?.filename)
+                is DownloadState.Failed ->
+                    DownloadNotifier.notifyFailed(appContext, game, terminal.reason)
+                else -> Unit
             }
         }
+        jobs[game.id] = job
     }
 
-    private suspend fun runDownload(game: Game, context: Context, candidate: DownloadCandidate?, hosterLink: String?) {
+    private suspend fun runDownload(
+        game: Game,
+        context: Context,
+        candidate: DownloadCandidate?,
+        hosterLink: String?,
+        subfolder: String? = null,
+    ) {
         val storageUriString = SettingsStore.folderFor(game.platform)
         if (storageUriString.isNullOrBlank()) {
             update(
@@ -113,8 +168,8 @@ object DownloadCoordinator {
             return
         }
         val storageUri = Uri.parse(storageUriString)
-        val tree = DocumentFile.fromTreeUri(context, storageUri)
-        if (tree == null || !tree.canWrite()) {
+        val root = DocumentFile.fromTreeUri(context, storageUri)
+        if (root == null || !root.canWrite()) {
             update(
                 game.id,
                 DownloadState.Failed(
@@ -122,6 +177,12 @@ object DownloadCoordinator {
                 ),
             )
             return
+        }
+        // Updates / DLC land in their own subfolder of the platform tree; base games at the root.
+        val tree = if (subfolder != null) {
+            (root.findFile(subfolder)?.takeIf { it.isDirectory } ?: root.createDirectory(subfolder)) ?: root
+        } else {
+            root
         }
 
         update(
@@ -178,7 +239,9 @@ object DownloadCoordinator {
             .apply { resolved.headers.forEach { (name, value) -> header(name, value) } }
             .build()
 
-        downloadClient.newCall(request).execute().use { response ->
+        val call = downloadClient.newCall(request)
+        calls[game.id] = call // so cancel() can interrupt the blocking transfer read
+        call.execute().use { response ->
             if (!response.isSuccessful) {
                 update(game.id, DownloadState.Failed("HTTP ${response.code} from ${resolved.siteName}"))
                 return
@@ -285,6 +348,21 @@ object DownloadCoordinator {
                 outFile.delete()
                 throw t
             }
+            // Guard against a silently-short transfer writing a truncated ROM an emulator then rejects
+            // ("no bootable game present"). Log the byte counts so a recurrence pins the cause, and
+            // reject a file that's provably incomplete.
+            Log.i(TAG, "Wrote ${rom.romName}: ${counting.count} wire bytes (expected ${total ?: "?"})")
+            if (total != null && counting.count < total) {
+                outFile.delete()
+                update(
+                    game.id,
+                    DownloadState.Failed(
+                        "Download was incomplete (${counting.count} of $total bytes). Try again, or pick another source.",
+                    ),
+                )
+                return
+            }
+            if (!verifyRom(game, context, outFile, rom.romName)) return
             update(game.id, DownloadState.Completed(outFile.uri.toString()))
             DownloadHistoryStore.add(
                 context,
@@ -318,7 +396,11 @@ object DownloadCoordinator {
         // ".part" makes it create "name.part.7z"); the "rc_tmp_" prefix marks it ours so a leftover
         // from a killed download can be cleaned.
         val tmpName = "rc_tmp_" + archiveName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        tree.findFile(tmpName)?.delete()
+        // Sweep any leftover temp archives from an extraction that was killed before its cleanup ran
+        // (e.g. the process was frozen while the screen was off) so they don't accumulate in the folder.
+        tree.listFiles().forEach { f ->
+            if (f.name?.startsWith("rc_tmp_") == true) runCatching { f.delete() }
+        }
         val tmpDoc = tree.createFile(mimeType, tmpName) ?: run {
             update(game.id, DownloadState.Failed("Couldn't create a temp file in the chosen folder."))
             return null
@@ -341,6 +423,19 @@ object DownloadCoordinator {
                     lastReported = pulled
                 }
             }
+        }
+        // A short buffer (stream ended before Content-Length) would extract to a truncated ROM. Catch it
+        // here rather than handing a corrupt archive to the extractor.
+        Log.i(TAG, "Buffered $archiveName: ${counting.count} wire bytes (expected ${total ?: "?"})")
+        if (total != null && counting.count < total) {
+            tmpDoc.delete()
+            update(
+                game.id,
+                DownloadState.Failed(
+                    "Download was incomplete (${counting.count} of $total bytes). Try again, or pick another source.",
+                ),
+            )
+            return null
         }
         return tmpDoc
     }
@@ -393,14 +488,31 @@ object DownloadCoordinator {
                         update(game.id, DownloadState.Failed("Couldn't create $romName in the chosen folder."))
                         return
                     }
+                    var written = 0L
                     val extracted = context.contentResolver.openOutputStream(outFile.uri)?.use { out ->
-                        item.extractSlow { data -> out.write(data); data.size } == ExtractOperationResult.OK
+                        item.extractSlow { data -> written += data.size; out.write(data); data.size } == ExtractOperationResult.OK
                     }
                     if (extracted != true) {
                         outFile.delete()
                         update(game.id, DownloadState.Failed("Couldn't extract $romName from $archiveName (corrupt, or a multi-part archive)."))
                         return
                     }
+                    // If the engine reports OK but wrote fewer bytes than the archive declares, the source
+                    // archive was truncated — writing that half-file would boot to "no bootable game".
+                    val declared = runCatching { item.size }.getOrNull()
+                    Log.i(TAG, "Extracted $romName: wrote $written bytes (archive declares ${declared ?: "?"})")
+                    if (declared != null && written < declared) {
+                        outFile.delete()
+                        update(
+                            game.id,
+                            DownloadState.Failed(
+                                "Download was incomplete — the archive was truncated ($written of $declared bytes). " +
+                                    "Try again, or pick another host/source.",
+                            ),
+                        )
+                        return
+                    }
+                    if (!verifyRom(game, context, outFile, romName)) return
                     update(game.id, DownloadState.Completed(outFile.uri.toString()))
                     DownloadHistoryStore.add(
                         context,
@@ -663,7 +775,46 @@ object DownloadCoordinator {
         override fun close() {}
     }
 
+    // Verify a freshly-written ROM isn't truncated before we call it done. Today: Switch .nsp (PFS0) — a
+    // cut-off program NCA is exactly why an emulator reports "no bootable game present". Reads the small
+    // header, compares the file's actual size against the size the container's table requires, and on a
+    // shortfall deletes the file + marks Failed. Returns true when OK or not checkable (never blocks a
+    // format we can't parse). Cheap: only the leading bytes are read, not the multi-GB body.
+    private fun verifyRom(game: Game, context: Context, outFile: DocumentFile, romName: String): Boolean {
+        if (!romName.endsWith(".nsp", ignoreCase = true)) return true
+        val header = runCatching {
+            context.contentResolver.openInputStream(outFile.uri)?.use { input ->
+                val buf = ByteArray(64 * 1024)
+                var read = 0
+                while (read < buf.size) {
+                    val n = input.read(buf, read, buf.size - read)
+                    if (n < 0) break
+                    read += n
+                }
+                buf.copyOf(read)
+            }
+        }.getOrNull() ?: return true
+        val required = NspIntegrity.requiredSize(header) ?: return true
+        val actual = outFile.length()
+        if (actual < required) {
+            Log.w(TAG, "Truncated NSP for ${game.title}: $actual bytes, container needs $required (short ${required - actual})")
+            outFile.delete()
+            update(
+                game.id,
+                DownloadState.Failed(
+                    "The downloaded game file is incomplete (truncated). Try again, or pick another host/source.",
+                ),
+            )
+            return false
+        }
+        Log.i(TAG, "NSP integrity OK for ${game.title}: $actual bytes >= required $required")
+        return true
+    }
+
     private fun update(gameId: String, state: DownloadState) {
+        // Once a stop is in flight, ignore the coroutine's trailing progress/error updates — cancel()
+        // has already set the final (absent) state and these would just flicker it back.
+        if (gameId in cancelling) return
         _downloads.value = _downloads.value + (gameId to state)
     }
 

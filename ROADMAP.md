@@ -27,8 +27,9 @@ The bar, concretely:
 **Solid:**
 - Catalog: ~33k games / 29 platforms, live titledb Switch sync, OpenVGDB + libretro metadata, dynamic Collections, submit-driven search with smart ranking.
 - Discovery Home: live hero carousel, popularity feed, browse-by-platform/genre, all data-driven (no hardcoded lists).
-- Downloads: Vimm's (primary, exact-match) → Debrid (optional) → Internet Archive (fallback), plus NXBrew DDL (picker-only, Switch). Manual source picker. Foreground-service downloads survive screen-off. Archive extraction (zip/tar/7z/rar, disc sets, `.m3u` generation).
+- Downloads: Vimm's (primary, exact-match) → Debrid (optional) → Internet Archive (fallback), plus NXBrew DDL (picker-only, Switch, with game disambiguation + Base/Update/DLC sections). Manual source picker. Foreground-service downloads survive screen-off **through extraction**. Terminal completion/failure notifications. Archive extraction (zip/tar/7z/rar, disc sets, `.m3u` generation).
 - **Download reliability just hardened (2026-07-01):** Vimm's `.7z` OOM fixed (native engine + largeHeap), 3DS `.cci` recognized, NXBrew page-matching fixed — all verified on-device.
+- **Background-extraction corruption fixed (2026-07-02):** the foreground service stopped mid-extract (extraction runs under `Preparing`, which wasn't counted as active) → screen-off froze it → corrupt ROM + undeleted temp archive; now the service stays alive through `Preparing` and posts a completion notification.
 
 **Fragile / gaps (the roadmap targets these):**
 - **No resume.** A dropped connection restarts a multi-GB download from zero.
@@ -49,9 +50,9 @@ Prioritized by impact on the five "launch-ready" criteria. Each track is a set o
 *The core value. If a download can fail, it must fail loudly and recoverably; if a game exists, we must get it.*
 
 - **A1 — Resumable downloads.** HTTP `Range` requests + persisted byte offset so a dropped transfer resumes instead of restarting. Critical for multi-GB Switch/3DS/disc images over Vimm's throttled tier. (Vimm's `dl*.vimm.net` already answers `206 Partial Content`.)
-- **A2 — Integrity verification.** After extraction, verify the ROM against the No-Intro/Redump CRC/MD5 where the source exposes it (Vimm's shows it; OpenVGDB stores hashes). Show a green "verified" badge; warn on mismatch. Turns "probably right" into "provably right."
+- **A2 — Integrity verification.** *(Started 2026-07-02: `NspIntegrity` rejects a truncated Switch `.nsp` by parsing its PFS0 table; native/streaming paths also reject a transfer short of Content-Length / declared archive size — catches the "no bootable game present" truncation class.)* Remaining: verify against the No-Intro/Redump CRC/MD5 where the source exposes it (Vimm's shows it; OpenVGDB stores hashes). Show a green "verified" badge; warn on mismatch. Turns "probably right" into "provably right."
 - **A3 — Multi-part / split-archive joining.** Assemble `Part1`/`Part2` (NXBrew) and `.001/.002`/`.7z.001` sets before extraction. Unlocks big first-party Switch/Wii U releases that currently can't complete.
-- **A4 — Update + DLC awareness (Switch).** NXBrew/DDL list Base + Update + DLC separately; fetch and co-locate them (naming the emulator expects) so a game arrives complete, not base-only.
+- **A4 — Update + DLC awareness (Switch).** *(Partly done 2026-07-02: the NXBrew picker now lists Base + Update + DLC as separate, downloadable sections.)* Remaining: fetch and **co-locate** them with the naming the emulator expects (and ideally auto-offer the update/DLC alongside the base) so a game arrives complete in one flow, not three manual picks.
 - **A5 — Every failure branch logs + surfaces.** Audit the download path so no failure updates the UI without a log line (the 3DS `.cci` bug hid here). Standardize on specific, actionable messages.
 - **A6 — Smarter Auto chain.** When the top source resolves a file that fails verification or extraction, fall through to the next source automatically instead of surfacing the failure.
 

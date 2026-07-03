@@ -27,21 +27,16 @@ interface RomSource {
 
 // One selectable download option from a source. Carries enough metadata to show the user what they'd
 // get (filename/title, region, size, an extra hint like seeders) and a thunk that produces the actual
-// download when picked.
-//
-// [unlockUrl] flags a candidate whose real file sits behind an ad-shortener (DDL sites): instead of
-// the [resolve] thunk, the UI opens this URL in a WebView for one human tap, captures the file-host
-// link it redirects to, and unlocks that via debrid. When set, [resolve] is unused.
+// download when picked. (NXBrew's ad-shortener flow doesn't use this — it drives its own picker steps.)
 class DownloadCandidate(
     val sourceName: String,
     val label: String,
     val region: String? = null,
     val sizeBytes: Long? = null,
     val extra: String? = null,
-    val unlockUrl: String? = null,
     val resolve: suspend () -> ResolvedDownload?,
 ) {
-    val id: String get() = "$sourceName|$label|$region|$extra|$unlockUrl"
+    val id: String get() = "$sourceName|$label|$region|$extra"
 }
 
 // Everything a source needs to find the right file, derived from a Game.

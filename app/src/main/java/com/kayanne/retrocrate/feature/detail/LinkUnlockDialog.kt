@@ -2,9 +2,15 @@ package com.kayanne.retrocrate.feature.detail
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.util.Log
+import android.view.ViewGroup
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +47,7 @@ fun LinkUnlockDialog(
     onDismiss: () -> Unit,
 ) {
     val currentOnCaptured by rememberUpdatedState(onCaptured)
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -80,6 +87,15 @@ fun LinkUnlockDialog(
                         WebView(ctx).apply {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            // Ad-shortener pages (ouo.io → Adscore/Cloudflare) fingerprint the browser via
+                            // the Shape Detection API; on this WebView, binding the barcode-detection
+                            // provider aborts the whole browser process (native FATAL) and kills the app.
+                            // Neuter those APIs before any page script runs so that path is never taken.
+                            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                                runCatching {
+                                    WebViewCompat.addDocumentStartJavaScript(this, NEUTER_FINGERPRINT_JS, setOf("*"))
+                                }
+                            }
                             webViewClient = object : WebViewClient() {
                                 private var captured = false
 
@@ -104,15 +120,54 @@ fun LinkUnlockDialog(
                                 }
 
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                    Log.i("LinkUnlock", "nav -> $url")
                                     maybeCapture(url)
+                                }
+
+                                // Log the exact host/URL when the *main frame* fails to load (a
+                                // DNS-blocked ad domain in the ouo.io chain shows as ERR_NAME_NOT_RESOLVED
+                                // and a "webpage not available" page). Subresource failures are ignored.
+                                override fun onReceivedError(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                    error: WebResourceError?,
+                                ) {
+                                    if (request?.isForMainFrame == true) {
+                                        Log.w(
+                                            "LinkUnlock",
+                                            "main-frame load failed: ${request.url} -> code ${error?.errorCode} (${error?.description})",
+                                        )
+                                    }
+                                }
+
+                                // If the WebView's renderer dies anyway (crash or OOM on a hostile ad
+                                // page), returning true tells the framework we've handled it — without
+                                // this the framework kills the whole app process.
+                                override fun onRenderProcessGone(
+                                    view: WebView?,
+                                    detail: RenderProcessGoneDetail?,
+                                ): Boolean {
+                                    Log.w("LinkUnlock", "WebView renderer gone (didCrash=${detail?.didCrash()}) — closing gate")
+                                    (view?.parent as? ViewGroup)?.removeView(view)
+                                    view?.destroy()
+                                    currentOnDismiss()
+                                    return true
                                 }
                             }
                             loadUrl(shortenerUrl)
                         }
                     },
-                    onRelease = { it.destroy() },
+                    onRelease = { runCatching { it.destroy() } },
                 )
             }
         }
     }
 }
+
+// Runs before any page script. Removes the Shape Detection APIs the ad-shortener's fingerprinting
+// probes — binding the barcode-detection provider crashes this WebView's browser process natively,
+// which was taking the whole app down. Feature-detection just sees them as unsupported.
+private const val NEUTER_FINGERPRINT_JS =
+    "(function(){try{['BarcodeDetector','FaceDetector','TextDetector'].forEach(function(k){" +
+        "try{Object.defineProperty(window,k,{value:undefined,configurable:true});}catch(e){try{window[k]=undefined;}catch(e2){}}" +
+        "});}catch(e){}})();"

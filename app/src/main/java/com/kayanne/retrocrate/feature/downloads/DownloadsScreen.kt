@@ -3,16 +3,20 @@ package com.kayanne.retrocrate.feature.downloads
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -82,7 +86,7 @@ fun DownloadsScreen(
                     if (uiState.active.isNotEmpty()) {
                         item("active-label") { SectionLabel("Active") }
                         items(uiState.active, key = { "active:${it.game.id}" }) { row ->
-                            DownloadRowCard(row)
+                            DownloadRowCard(row, onCancel = { viewModel.cancel(row.game.id) })
                         }
                     }
                     if (uiState.history.isNotEmpty()) {
@@ -154,44 +158,59 @@ private fun HistoryRowCard(entry: DownloadHistoryStore.Entry) {
 private val DATE_FORMAT = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
 
 @Composable
-private fun DownloadRowCard(row: DownloadRow) {
+private fun DownloadRowCard(row: DownloadRow, onCancel: () -> Unit) {
+    val isFailed = row.state is DownloadState.Failed
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
         shape = RoundedCornerShape(8.dp),
     ) {
-        Column(modifier = Modifier.padding(Spacing.m)) {
-            Text(
-                text = row.game.title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = row.game.platform.displayName,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            row.info?.let { info ->
-                Spacer(Modifier.height(Spacing.xs))
+        Row(
+            modifier = Modifier.padding(Spacing.m),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = info.filename,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = row.game.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                info.totalBytes?.let { bytes ->
+                Text(
+                    text = row.game.platform.displayName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                row.info?.let { info ->
+                    Spacer(Modifier.height(Spacing.xs))
                     Text(
-                        text = formatBytes(bytes),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        text = info.filename,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                    info.totalBytes?.let { bytes ->
+                        Text(
+                            text = formatBytes(bytes),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
+                Spacer(Modifier.height(Spacing.xs))
+                StateLine(state = row.state)
             }
-            Spacer(Modifier.height(Spacing.xs))
-            StateLine(state = row.state)
+            Spacer(Modifier.width(Spacing.s))
+            // Stop a running download, or clear a failed one — both remove it from the active list.
+            IconButton(onClick = onCancel, modifier = Modifier.size(56.dp)) {
+                Icon(
+                    imageVector = Icons.Outlined.Close,
+                    contentDescription = if (isFailed) "Dismiss ${row.game.title}" else "Stop downloading ${row.game.title}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

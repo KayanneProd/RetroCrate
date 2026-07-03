@@ -35,6 +35,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kayanne.retrocrate.core.designsystem.Spacing
 import com.kayanne.retrocrate.data.source.DownloadCandidate
+import com.kayanne.retrocrate.data.source.ddl.NxbrewFile
+import com.kayanne.retrocrate.data.source.ddl.NxbrewGame
 
 // "Choose where to download from." Two steps: pick a source (or Auto), then pick one of that source's
 // candidate files — with metadata — or back out and try another. Solves "the first auto-match was the
@@ -46,7 +48,10 @@ fun DownloadSourceSheet(
     onAuto: () -> Unit,
     onSourceSelected: (String) -> Unit,
     onCandidateSelected: (DownloadCandidate) -> Unit,
+    onNxbrewGameSelected: (NxbrewGame) -> Unit,
+    onNxbrewFileSelected: (NxbrewFile) -> Unit,
     onBack: () -> Unit,
+    onBackFromFiles: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Hidden shows nothing; Unlock is rendered separately as a full-screen WebView dialog.
@@ -66,9 +71,11 @@ fun DownloadSourceSheet(
         ) {
             when (state) {
                 is DownloadPicker.Hidden, is DownloadPicker.Unlock -> Unit
-                is DownloadPicker.Sources -> SourcesStep(state.sources, onAuto, onSourceSelected)
+                is DownloadPicker.Sources -> SourcesStep(state.sources, state.hint, onAuto, onSourceSelected)
                 is DownloadPicker.Loading -> LoadingStep(state.source)
                 is DownloadPicker.Candidates -> CandidatesStep(state.source, state.items, onCandidateSelected, onBack)
+                is DownloadPicker.NxbrewGames -> NxbrewGamesStep(state.games, onNxbrewGameSelected, onBack)
+                is DownloadPicker.NxbrewFiles -> NxbrewFilesStep(state.game, state.files, onNxbrewFileSelected, onBackFromFiles)
                 is DownloadPicker.Empty -> EmptyStep(state.source, onBack)
             }
         }
@@ -78,6 +85,7 @@ fun DownloadSourceSheet(
 @Composable
 private fun SourcesStep(
     sources: List<String>,
+    hint: String?,
     onAuto: () -> Unit,
     onSourceSelected: (String) -> Unit,
 ) {
@@ -103,6 +111,108 @@ private fun SourcesStep(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+    if (hint != null) {
+        Spacer(Modifier.height(Spacing.s))
+        Text(
+            text = hint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun NxbrewGamesStep(
+    games: List<NxbrewGame>,
+    onGameSelected: (NxbrewGame) -> Unit,
+    onBack: () -> Unit,
+) {
+    BackHeader("Pick the right game", onBack)
+    Text(
+        text = "NXBrew listed more than one match. Choose the game you want.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = Spacing.xs),
+    )
+    LazyColumn(
+        modifier = Modifier.heightIn(max = 380.dp),
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+    ) {
+        items(games, key = { it.pageUrl }) { game ->
+            SheetRow(onClick = { onGameSelected(game) }) {
+                Text(
+                    text = game.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NxbrewFilesStep(
+    game: NxbrewGame,
+    files: List<NxbrewFile>,
+    onFileSelected: (NxbrewFile) -> Unit,
+    onBack: () -> Unit,
+) {
+    BackHeader(game.title, onBack)
+    Text(
+        text = "Pick base game, an update, or DLC. Each opens one ad page, then unlocks via debrid.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = Spacing.xs),
+    )
+    // Only worth showing the region per row when the page actually offers more than one.
+    val showRegion = files.map { it.region }.distinct().size > 1
+    LazyColumn(
+        modifier = Modifier.heightIn(max = 380.dp),
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+    ) {
+        // One header per variant (each update version / DLC pack is its own group) with its host rows.
+        // Files arrive pre-sorted (Base → Updates → DLC, hosts within), so a running header renders each
+        // variant once and keeps three different update versions visible as separate choices.
+        var lastKey: Pair<String?, String>? = null
+        files.forEach { file ->
+            val key = file.region to file.variantLabel
+            if (key != lastKey) {
+                lastKey = key
+                val header = if (showRegion && file.region != null) "${file.region} · ${file.variantLabel}" else file.variantLabel
+                item(key = "hdr-${file.region}-${file.variantLabel}") {
+                    Text(
+                        text = header,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = Spacing.xs, bottom = Spacing.xs),
+                    )
+                }
+            }
+            item(key = "${file.region}-${file.variantLabel}-${file.host}") {
+                SheetRow(onClick = { onFileSelected(file) }) {
+                    Text(
+                        text = file.host,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }

@@ -32,6 +32,9 @@ class DownloadsViewModel : ViewModel() {
         // History = everything ever completed (persisted, newest first).
         DownloadsUiState(active = active, history = history)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DownloadsUiState())
+
+    // Stop an in-flight download (or clear a failed one) — removes it from the active list.
+    fun cancel(gameId: String) = DownloadCoordinator.cancel(gameId)
 }
 
 data class DownloadsUiState(

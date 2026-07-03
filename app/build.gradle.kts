@@ -83,6 +83,9 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.documentfile)
 
+    // WebView hardening (document-start script injection) for the DDL ad-gate flow
+    implementation(libs.androidx.webkit)
+
     // Network
     implementation(libs.retrofit)
     implementation(libs.retrofit.kotlinx.serialization.converter)

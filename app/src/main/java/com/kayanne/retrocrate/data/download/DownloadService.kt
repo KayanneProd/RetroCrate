@@ -49,8 +49,14 @@ class DownloadService : Service() {
         if (observer == null) {
             observer = scope.launch {
                 DownloadCoordinator.downloads.collectLatest { downloads ->
+                    // Preparing counts as active: extraction of a big .7z/.rar (and the debrid
+                    // server-side fetch) runs under Preparing, and if the service stopped here the
+                    // wake lock would drop mid-extract — the screen turning off would then freeze the
+                    // coroutine and leave a corrupt ROM + an undeleted temp archive.
                     val active = downloads.values.count {
-                        it is DownloadState.InProgress || it is DownloadState.Queued
+                        it is DownloadState.InProgress ||
+                            it is DownloadState.Queued ||
+                            it is DownloadState.Preparing
                     }
                     if (active == 0) {
                         stopSelf()
