@@ -6,6 +6,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.InputStream
+import java.io.OutputStream
 
 // Internet Archive (and others) usually ship a game as an archive — a .tar.gz or .zip wrapping the
 // actual ROM — not a bare file. This unwraps it *during* the download: the returned stream yields
@@ -39,6 +40,27 @@ object ArchiveExtractor {
                 RomStream(filename, raw)
         }
     }
+
+    // Copies the opened ROM entry to [sink], then pulls the rest of [raw] to EOF. The drain matters:
+    // the entry read stops before an archive's trailing bytes (a zip's central directory, any entries
+    // after the ROM), so a completeness check comparing wire bytes to Content-Length would otherwise
+    // flag every fully-transferred archive as truncated and delete a good ROM.
+    fun copyRomAndDrain(rom: InputStream, raw: InputStream, sink: OutputStream, onChunk: () -> Unit = {}) {
+        val buf = ByteArray(64 * 1024)
+        while (true) {
+            val n = rom.read(buf)
+            if (n == -1) break
+            sink.write(buf, 0, n)
+            onChunk()
+        }
+        while (raw.read(buf) != -1) Unit
+    }
+
+    // A per-game folder is only for genuine disc sets (a .cue + its .bin tracks, several discs).
+    // A single-file image (a lone GameCube .iso) must land directly in the platform folder —
+    // frontends scan that folder for loadable files and don't look inside a nested one.
+    fun needsSetFolder(entryNames: List<String>): Boolean =
+        entryNames.count { isKeepableDiscEntry(it) } > 1
 
     fun isArchive(filename: String): Boolean {
         val lower = filename.lowercase()

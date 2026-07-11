@@ -2,6 +2,7 @@ package com.kayanne.retrocrate.data.download
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.kayanne.retrocrate.data.network.HttpClient
@@ -330,12 +331,8 @@ object DownloadCoordinator {
             try {
                 output.use { sink ->
                     rom.stream.use { src ->
-                        val buf = ByteArray(64 * 1024)
                         var lastReported = 0L
-                        while (true) {
-                            val n = src.read(buf)
-                            if (n == -1) break
-                            sink.write(buf, 0, n)
+                        ArchiveExtractor.copyRomAndDrain(src, counting, sink) {
                             val pulled = counting.count
                             if (pulled - lastReported >= 262_144L) {
                                 update(game.id, DownloadState.InProgress(pulled, total))
@@ -395,7 +392,7 @@ object DownloadCoordinator {
         // Keep the original archive extension so SAF doesn't append a second one (a name ending in
         // ".part" makes it create "name.part.7z"); the "rc_tmp_" prefix marks it ours so a leftover
         // from a killed download can be cleaned.
-        val tmpName = "rc_tmp_" + archiveName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val tmpName = "rc_tmp_" + safeName(archiveName)
         // Sweep any leftover temp archives from an extraction that was killed before its cleanup ran
         // (e.g. the process was frozen while the screen was off) so they don't accumulate in the folder.
         tree.listFiles().forEach { f ->
@@ -463,6 +460,7 @@ object DownloadCoordinator {
         }
         val tmpDoc = bufferArchiveToTemp(game, context, tree, archiveName, mime, counting, total)
             ?: return
+        var succeeded = false
         try {
             update(game.id, DownloadState.Preparing("Extracting…"))
             context.contentResolver.openFileDescriptor(tmpDoc.uri, "r")?.use { pfd ->
@@ -470,8 +468,10 @@ object DownloadCoordinator {
                 val archive = SevenZip.openInArchive(null, ChannelInStream(channel))
                 try {
                     val items = archive.simpleInterface.archiveItems
-                    if (multiFile) {
-                        extractNativeSet(game, context, tree, folderName(archiveName), total, items)
+                    if (multiFile &&
+                        ArchiveExtractor.needsSetFolder(items.mapNotNull { if (it.isFolder) null else it.path })
+                    ) {
+                        succeeded = extractNativeSet(game, context, tree, folderName(archiveName), total, items)
                         return
                     }
                     val item = items.firstOrNull {
@@ -513,6 +513,7 @@ object DownloadCoordinator {
                         return
                     }
                     if (!verifyRom(game, context, outFile, romName)) return
+                    succeeded = true
                     update(game.id, DownloadState.Completed(outFile.uri.toString()))
                     DownloadHistoryStore.add(
                         context,
@@ -542,12 +543,50 @@ object DownloadCoordinator {
                 ),
             )
         } finally {
+            // The transfer itself completed (a short one never gets past bufferArchiveToTemp), so if
+            // extraction failed the archive is still good data — keep it for manual extraction
+            // instead of deleting it. Cancelled downloads are cleaned up as before.
+            if (succeeded || game.id in cancelling) {
+                tmpDoc.delete()
+            } else {
+                keepArchiveForManualExtraction(game, tree, tmpDoc, archiveName)
+            }
+        }
+    }
+
+    // Renames the fully-downloaded temp archive to its real name (so the rc_tmp_ sweep won't reap it)
+    // and tells the user where it is, appended to the already-reported failure. If the rename fails,
+    // fall back to deleting — never leave an rc_tmp_ file to be swept mid-manual-extraction later.
+    private fun keepArchiveForManualExtraction(
+        game: Game,
+        tree: DocumentFile,
+        tmpDoc: DocumentFile,
+        archiveName: String,
+    ) {
+        val keptName = safeName(archiveName)
+        runCatching { tree.findFile(keptName)?.delete() }
+        val renamed = runCatching { tmpDoc.renameTo(keptName) }.getOrDefault(false)
+        if (!renamed) {
             tmpDoc.delete()
+            return
+        }
+        Log.i(TAG, "Kept archive for manual extraction: $keptName")
+        val state = _downloads.value[game.id]
+        if (state is DownloadState.Failed) {
+            update(
+                game.id,
+                DownloadState.Failed(
+                    state.reason + " The downloaded archive was kept as \"$keptName\" in your " +
+                        "${game.platform.displayName} folder, so you can extract it yourself.",
+                ),
+            )
         }
     }
 
     // Disc-set .7z/.rar decoded by the native engine (a PS2/GameCube/Saturn disc image shipped as one
-    // random-access archive): extract every keepable part into a per-game folder, mirroring the zip set path.
+    // random-access archive): extract every keepable part into a per-game folder, mirroring the zip
+    // set path. Returns true only when the set landed completely, so the caller knows whether to
+    // delete the buffered archive or keep it for manual extraction.
     private suspend fun extractNativeSet(
         game: Game,
         context: Context,
@@ -555,11 +594,11 @@ object DownloadCoordinator {
         folderName: String,
         total: Long?,
         items: Array<ISimpleInArchiveItem>,
-    ) {
+    ): Boolean {
         tree.findFile(folderName)?.delete()
         val subDir = tree.createDirectory(folderName) ?: run {
             update(game.id, DownloadState.Failed("Couldn't create a folder for ${game.title}."))
-            return
+            return false
         }
         val written = ArrayList<String>()
         for (item in items) {
@@ -569,7 +608,7 @@ object DownloadCoordinator {
             val outFile = subDir.createFile(mimeFor(outName), outName) ?: run {
                 subDir.delete()
                 update(game.id, DownloadState.Failed("Couldn't write $outName for ${game.title}."))
-                return
+                return false
             }
             val ok = context.contentResolver.openOutputStream(outFile.uri)?.use { out ->
                 item.extractSlow { data -> out.write(data); data.size } == ExtractOperationResult.OK
@@ -577,30 +616,17 @@ object DownloadCoordinator {
             if (ok != true) {
                 subDir.delete()
                 update(game.id, DownloadState.Failed("Couldn't extract ${game.title} from $folderName."))
-                return
+                return false
             }
             written.add(outName)
         }
         if (written.isEmpty()) {
             subDir.delete()
             update(game.id, DownloadState.Failed("Couldn't find a ROM inside ${game.title}."))
-            return
+            return false
         }
-        writeM3uIfMultiDisc(context, subDir, folderName, written)
-        _info.value = _info.value + (game.id to DownloadInfo(folderName, total))
-        update(game.id, DownloadState.Completed(subDir.uri.toString()))
-        DownloadHistoryStore.add(
-            context,
-            DownloadHistoryStore.Entry(
-                gameId = game.id,
-                title = game.title,
-                platform = game.platform.name,
-                filename = folderName,
-                sizeBytes = total,
-                completedAt = System.currentTimeMillis(),
-            ),
-        )
-        Log.i(TAG, "Extracted ${game.title} -> ${subDir.uri} (${written.size} files)")
+        completeSet(game, context, tree, subDir, folderName, total, written)
+        return true
     }
 
     // Tiny archive-entry descriptor shared by the zip/tar and 7z extraction loops.
@@ -662,21 +688,75 @@ object DownloadCoordinator {
             update(game.id, DownloadState.Failed("Couldn't find a ROM inside ${game.title}."))
             return
         }
-        writeM3uIfMultiDisc(context, subDir, folderName, written)
-        _info.value = _info.value + (game.id to DownloadInfo(folderName, total))
-        update(game.id, DownloadState.Completed(subDir.uri.toString()))
+        completeSet(game, context, tree, subDir, folderName, total, written)
+    }
+
+    // Shared ending for both set-extraction paths: record what landed, mark Completed, and write the
+    // disc-swap playlist when warranted. A "set" that turned out to be one file is first moved out of
+    // its per-game folder — a lone disc image nested in a same-named folder is invisible to frontends
+    // scanning the platform folder.
+    private suspend fun completeSet(
+        game: Game,
+        context: Context,
+        tree: DocumentFile,
+        subDir: DocumentFile,
+        folderName: String,
+        total: Long?,
+        written: List<String>,
+    ) {
+        val single = if (written.size == 1) promoteSingleFile(context, tree, subDir, written[0]) else null
+        if (single == null) writeM3uIfMultiDisc(context, subDir, folderName, written)
+        val filename = if (single != null) written[0] else folderName
+        val uri = single?.uri ?: subDir.uri
+        _info.value = _info.value + (game.id to DownloadInfo(filename, total))
+        update(game.id, DownloadState.Completed(uri.toString()))
         DownloadHistoryStore.add(
             context,
             DownloadHistoryStore.Entry(
                 gameId = game.id,
                 title = game.title,
                 platform = game.platform.name,
-                filename = folderName,
+                filename = filename,
                 sizeBytes = total,
                 completedAt = System.currentTimeMillis(),
             ),
         )
-        Log.i(TAG, "Extracted ${game.title} -> ${subDir.uri} (${written.size} files)")
+        Log.i(TAG, "Extracted ${game.title} -> $uri (${written.size} files)")
+    }
+
+    // Moves the lone file out of its per-game folder into the platform tree and drops the folder.
+    // Same-volume SAF move is a rename (instant, even for a multi-GB image); if the provider
+    // refuses, fall back to copy + delete. Returns null when promotion isn't possible — the caller
+    // keeps the folder layout rather than failing a download that already extracted fine.
+    private fun promoteSingleFile(
+        context: Context,
+        tree: DocumentFile,
+        subDir: DocumentFile,
+        fileName: String,
+    ): DocumentFile? {
+        val src = subDir.findFile(fileName) ?: return null
+        tree.findFile(fileName)?.delete()
+        val movedUri = runCatching {
+            DocumentsContract.moveDocument(context.contentResolver, src.uri, subDir.uri, tree.uri)
+        }.getOrNull()
+        val promoted = if (movedUri != null) {
+            tree.findFile(fileName) ?: DocumentFile.fromSingleUri(context, movedUri)
+        } else {
+            val dst = tree.createFile(mimeFor(fileName), fileName) ?: return null
+            val copied = runCatching {
+                context.contentResolver.openInputStream(src.uri)!!.use { input ->
+                    context.contentResolver.openOutputStream(dst.uri)!!.use { out -> input.copyTo(out) }
+                }
+            }.isSuccess
+            if (!copied) {
+                dst.delete()
+                return null
+            }
+            src.delete()
+            dst
+        }
+        if (promoted != null) runCatching { subDir.delete() }
+        return promoted
     }
 
     // RetroArch swaps discs from an .m3u listing each disc. If the set has ≥2 loadable disc images and
@@ -703,8 +783,10 @@ object DownloadCoordinator {
         for (ext in listOf(".tar.gz", ".tgz", ".tar", ".zip", ".7z", ".gz")) {
             if (name.endsWith(ext, ignoreCase = true)) { name = name.dropLast(ext.length); break }
         }
-        return name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "game" }
+        return safeName(name).trim().ifBlank { "game" }
     }
+
+    private fun safeName(name: String): String = name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
 
     private fun isDiscBased(platform: Platform): Boolean = when (platform) {
         Platform.PS1, Platform.PS2, Platform.PSP, Platform.SATURN, Platform.DREAMCAST,
